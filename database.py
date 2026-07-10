@@ -87,14 +87,25 @@ def initialize_database():
 
         -- Conference panels proposed by committees
         CREATE TABLE IF NOT EXISTS panels (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            title             TEXT    NOT NULL,
-            short_description TEXT,
-            full_description  TEXT,
-            status            TEXT    NOT NULL DEFAULT 'draft'
-                                      CHECK(status IN ('draft', 'approved', 'to be presented')),
-            priority_ranking  INTEGER,
-            committee_id      INTEGER REFERENCES committees(id)
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            title               TEXT    NOT NULL,
+            short_description   TEXT,
+            full_description    TEXT,
+            status              TEXT    NOT NULL DEFAULT 'draft'
+                                        CHECK(status IN ('draft', 'approved', 'to be presented')),
+            priority_ranking    INTEGER,
+            committee_id        INTEGER REFERENCES committees(id),
+            track_id            INTEGER REFERENCES tracks(id),
+            committee_notes     TEXT,  -- visible to committee members and admins
+            presentation_notes  TEXT,  -- day-of logistics notes, visible to committee members and admins
+            admin_notes         TEXT   -- internal, admin-only to read or edit
+        );
+
+        -- Topics a panel is meant to cover (used to help match relevant speakers)
+        CREATE TABLE IF NOT EXISTS panel_topics (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            panel_id INTEGER NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+            topic    TEXT    NOT NULL
         );
 
         -- Which speakers are on which panels, and in what role
@@ -168,6 +179,18 @@ def initialize_database():
     for col, definition in day_col_upgrades:
         if col not in existing_day_cols:
             conn.execute(f"ALTER TABLE conference_days ADD COLUMN {col} {definition}")
+
+    # Add new columns to panels for existing databases
+    existing_panel_cols = [r[1] for r in conn.execute("PRAGMA table_info(panels)").fetchall()]
+    panel_col_upgrades = [
+        ("track_id",           "INTEGER REFERENCES tracks(id)"),
+        ("committee_notes",    "TEXT"),
+        ("presentation_notes", "TEXT"),
+        ("admin_notes",        "TEXT"),
+    ]
+    for col, definition in panel_col_upgrades:
+        if col not in existing_panel_cols:
+            conn.execute(f"ALTER TABLE panels ADD COLUMN {col} {definition}")
 
     # Seed a single conference_config row if none exists
     if conn.execute("SELECT COUNT(*) FROM conference_config").fetchone()[0] == 0:
