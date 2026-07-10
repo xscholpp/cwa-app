@@ -117,6 +117,13 @@ def initialize_database():
             priority_ranking INTEGER  -- order preference within the panel
         );
 
+        -- Which of a speaker's own topics are relevant to their spot on a given panel
+        CREATE TABLE IF NOT EXISTS panel_speaker_topics (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            panel_speaker_id INTEGER NOT NULL REFERENCES panel_speakers(id) ON DELETE CASCADE,
+            speaker_topic_id INTEGER NOT NULL REFERENCES speaker_topics(id) ON DELETE CASCADE
+        );
+
         -- Physical rooms where panels take place
         CREATE TABLE IF NOT EXISTS rooms (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,

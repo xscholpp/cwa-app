@@ -38,7 +38,7 @@ STATUS_OPTIONS = ["draft", "approved", "to be presented"]
 
 st.title("Panels")
 
-tab_list, tab_add = st.tabs(["All Panels", "Add Panel"])
+tab_list, tab_add, tab_order = st.tabs(["All Panels", "Add Panel", "Priority Order"])
 
 
 # ── TAB 1: List panels ─────────────────────────────────────────────────────────
@@ -123,6 +123,80 @@ with tab_list:
                         )
                         conn.commit()
                         st.rerun()
+
+                # ── Speakers ──────────────────────────────────────────────────
+                st.divider()
+                st.markdown("**Speakers:**")
+
+                assigned = conn.execute("""
+                    SELECT ps.id AS panel_speaker_id, ps.role, s.id AS speaker_id, s.name
+                    FROM panel_speakers ps
+                    JOIN speakers s ON s.id = ps.speaker_id
+                    WHERE ps.panel_id = ?
+                    ORDER BY CASE ps.role WHEN 'panelist' THEN 0 ELSE 1 END, s.name
+                """, (pid,)).fetchall()
+
+                if assigned:
+                    for row in assigned:
+                        their_topics = conn.execute("""
+                            SELECT st.topic FROM panel_speaker_topics pst
+                            JOIN speaker_topics st ON st.id = pst.speaker_topic_id
+                            WHERE pst.panel_speaker_id = ?
+                            ORDER BY st.topic
+                        """, (row["panel_speaker_id"],)).fetchall()
+                        topic_str = ", ".join(t["topic"] for t in their_topics) or "—"
+
+                        sc1, sc2 = st.columns([6, 1])
+                        with sc1:
+                            st.markdown(f"- **{row['name']}** ({row['role']}) — topics: {topic_str}")
+                        with sc2:
+                            if editable and st.button("Remove", key=f"del_pspeaker_{row['panel_speaker_id']}"):
+                                conn.execute("DELETE FROM panel_speakers WHERE id = ?", (row["panel_speaker_id"],))
+                                conn.commit()
+                                st.rerun()
+                else:
+                    st.markdown("None")
+
+                if editable:
+                    assigned_ids = {r["speaker_id"] for r in assigned}
+                    all_speakers = conn.execute("SELECT id, name FROM speakers ORDER BY name").fetchall()
+                    available = [s for s in all_speakers if s["id"] not in assigned_ids]
+
+                    if not all_speakers:
+                        st.caption("No speakers exist yet — add some in the Speakers page first.")
+                    elif not available:
+                        st.caption("All speakers are already assigned to this panel.")
+                    else:
+                        st.markdown("**Add a speaker:**")
+                        speaker_names = [s["name"] for s in available]
+                        chosen_name = st.selectbox("Speaker", speaker_names, key=f"add_spk_sel_{pid}")
+                        chosen_id = next(s["id"] for s in available if s["name"] == chosen_name)
+                        role_choice = st.selectbox("Role", ["panelist", "alternate"], key=f"add_spk_role_{pid}")
+
+                        speaker_topics = conn.execute(
+                            "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
+                            (chosen_id,)
+                        ).fetchall()
+                        topic_choices = [t["topic"] for t in speaker_topics]
+                        chosen_topics = st.multiselect(
+                            "Relevant topics for this panel", topic_choices, key=f"add_spk_topics_{pid}"
+                        )
+
+                        if st.button("Add speaker to panel", key=f"add_spk_btn_{pid}"):
+                            cur = conn.execute(
+                                "INSERT INTO panel_speakers (panel_id, speaker_id, role) VALUES (?, ?, ?)",
+                                (pid, chosen_id, role_choice)
+                            )
+                            panel_speaker_id = cur.lastrowid
+                            for t in speaker_topics:
+                                if t["topic"] in chosen_topics:
+                                    conn.execute(
+                                        "INSERT INTO panel_speaker_topics (panel_speaker_id, speaker_topic_id) "
+                                        "VALUES (?, ?)",
+                                        (panel_speaker_id, t["id"])
+                                    )
+                            conn.commit()
+                            st.rerun()
 
                 # ── Edit ──────────────────────────────────────────────────────
                 if editable:
@@ -339,3 +413,84 @@ with tab_add:
                 conn.close()
                 st.success(f"Panel '{title.strip()}' added.")
                 st.rerun()
+
+
+# ── TAB 3: Priority order per committee ────────────────────────────────────────
+with tab_order:
+    conn = get_connection()
+    committees = conn.execute("SELECT id, name FROM committees ORDER BY name").fetchall()
+    conn.close()
+
+    order_committee_id = None
+
+    if can_view_all and committees:
+        names = [c["name"] for c in committees]
+        default_idx = 0
+        if my_committee_id:
+            my_name = next((c["name"] for c in committees if c["id"] == my_committee_id), None)
+            if my_name in names:
+                default_idx = names.index(my_name)
+        chosen_name = st.selectbox("Committee", names, index=default_idx, key="order_committee_select")
+        order_committee_id = next(c["id"] for c in committees if c["name"] == chosen_name)
+    elif my_committee_id:
+        my_name = next((c["name"] for c in committees if c["id"] == my_committee_id), "Your committee")
+        st.caption(f"Showing: **{my_name}**")
+        order_committee_id = my_committee_id
+
+    if order_committee_id is None:
+        st.info("You're not assigned to a committee.")
+    else:
+        editable = can_edit_panel(order_committee_id)
+
+        conn = get_connection()
+        ordered = conn.execute("""
+            SELECT id, title, status, priority_ranking FROM panels
+            WHERE committee_id = ?
+            ORDER BY (priority_ranking IS NULL), priority_ranking, title
+        """, (order_committee_id,)).fetchall()
+
+        # Normalize to sequential 1..N (preserving current order) so the
+        # up/down buttons always have well-defined, gap-free positions.
+        if any(p["priority_ranking"] != i + 1 for i, p in enumerate(ordered)):
+            for i, p in enumerate(ordered):
+                conn.execute("UPDATE panels SET priority_ranking = ? WHERE id = ?", (i + 1, p["id"]))
+            conn.commit()
+            ordered = conn.execute("""
+                SELECT id, title, status, priority_ranking FROM panels
+                WHERE committee_id = ? ORDER BY priority_ranking
+            """, (order_committee_id,)).fetchall()
+        conn.close()
+
+        if not ordered:
+            st.info("No panels for this committee yet.")
+        else:
+            for i, p in enumerate(ordered):
+                c1, c2, c3, c4, c5 = st.columns([1, 5, 2, 1, 1])
+                with c1:
+                    st.markdown(f"**{p['priority_ranking']}**")
+                with c2:
+                    st.markdown(p["title"])
+                with c3:
+                    st.caption(p["status"])
+                with c4:
+                    if editable and st.button("↑", key=f"up_{p['id']}", disabled=(i == 0)):
+                        other = ordered[i - 1]
+                        conn = get_connection()
+                        conn.execute("UPDATE panels SET priority_ranking = ? WHERE id = ?",
+                                     (other["priority_ranking"], p["id"]))
+                        conn.execute("UPDATE panels SET priority_ranking = ? WHERE id = ?",
+                                     (p["priority_ranking"], other["id"]))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+                with c5:
+                    if editable and st.button("↓", key=f"down_{p['id']}", disabled=(i == len(ordered) - 1)):
+                        other = ordered[i + 1]
+                        conn = get_connection()
+                        conn.execute("UPDATE panels SET priority_ranking = ? WHERE id = ?",
+                                     (other["priority_ranking"], p["id"]))
+                        conn.execute("UPDATE panels SET priority_ranking = ? WHERE id = ?",
+                                     (p["priority_ranking"], other["id"]))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
