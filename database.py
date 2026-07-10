@@ -15,9 +15,11 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "cwa.db")
 
 def get_connection():
     """Open and return a connection to the database."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row          # lets us access columns by name (e.g. row["title"])
     conn.execute("PRAGMA foreign_keys = ON") # enforce relationships between tables
+    conn.execute("PRAGMA journal_mode = WAL") # allow concurrent readers while a write is in progress
+    conn.execute("PRAGMA busy_timeout = 10000") # wait up to 10s on a lock instead of erroring immediately
     return conn
 
 
