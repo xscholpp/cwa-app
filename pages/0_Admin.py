@@ -12,7 +12,9 @@ from auth import (
     create_user, PRESETS, PERMISSION_LABELS, PERMISSIONS,
     apply_preset_to_session,
 )
+from layout import widen_content
 
+widen_content()
 require_login()
 
 # Block access if user has no admin permissions at all

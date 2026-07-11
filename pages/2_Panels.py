@@ -23,7 +23,9 @@ Access model:
 import streamlit as st
 from database import get_connection
 from auth import require_login, has_permission, get_current_user
+from layout import widen_content
 
+widen_content()
 require_login()
 
 current_user = get_current_user()

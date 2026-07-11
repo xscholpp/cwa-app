@@ -12,7 +12,9 @@ Availability model:
 import streamlit as st
 from database import get_connection
 from auth import require_login, has_permission
+from layout import widen_content
 
+widen_content()
 require_login()
 
 if not has_permission("can_manage_speakers"):

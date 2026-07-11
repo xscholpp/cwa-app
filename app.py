@@ -8,10 +8,12 @@ Run with: python3 -m streamlit run app.py
 import streamlit as st
 from database import initialize_database, get_connection
 from auth import login, logout, get_current_user, create_user, PRESETS, PERMISSIONS
+from layout import widen_content
 
 initialize_database()
 
 st.set_page_config(page_title="CWA Conference Manager", layout="wide")
+widen_content()
 
 # Check whether any user accounts exist yet
 conn = get_connection()
