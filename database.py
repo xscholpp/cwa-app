@@ -46,7 +46,8 @@ def initialize_database():
             default_break_minutes     INTEGER DEFAULT 15,
             default_concurrent_panels INTEGER DEFAULT 3,
             default_start_time        TEXT    DEFAULT '09:00',
-            default_end_time          TEXT    DEFAULT '17:30'
+            default_end_time          TEXT    DEFAULT '17:30',
+            session_secret            TEXT  -- signs "remember me" login cookies
         );
 
         -- Conference days with actual dates and per-day schedule settings
@@ -186,6 +187,11 @@ def initialize_database():
     for col, definition in day_col_upgrades:
         if col not in existing_day_cols:
             conn.execute(f"ALTER TABLE conference_days ADD COLUMN {col} {definition}")
+
+    # Add new columns to conference_config for existing databases
+    existing_config_cols = [r[1] for r in conn.execute("PRAGMA table_info(conference_config)").fetchall()]
+    if "session_secret" not in existing_config_cols:
+        conn.execute("ALTER TABLE conference_config ADD COLUMN session_secret TEXT")
 
     # Add new columns to panels for existing databases
     existing_panel_cols = [r[1] for r in conn.execute("PRAGMA table_info(panels)").fetchall()]
