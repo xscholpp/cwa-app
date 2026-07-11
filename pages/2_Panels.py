@@ -325,7 +325,7 @@ else:
             else:
                 for i, row in enumerate(assigned):
                     with st.container(border=True):
-                        top1, top2, top3, top4, top5 = st.columns([1, 1, 1, 6, 1])
+                        top1, top2, top3, top4, top5, top6, top7 = st.columns([1, 1, 1, 2, 2, 3, 1])
                         with top1:
                             st.markdown(f"**#{row['priority_ranking']}**")
                         with top2:
@@ -361,15 +361,6 @@ else:
                                 st.rerun()
                         with top4:
                             st.markdown(f"**{row['name']}**")
-                        with top5:
-                            if st.button("✕", key=f"del_pspeaker_{row['panel_speaker_id']}"):
-                                conn = get_connection()
-                                conn.execute(
-                                    "DELETE FROM panel_speakers WHERE id = ?", (row["panel_speaker_id"],)
-                                )
-                                conn.commit()
-                                conn.close()
-                                st.rerun()
 
                         conn = get_connection()
                         their_topics = conn.execute(
@@ -388,8 +379,7 @@ else:
                             topic_name_by_id[tid] for tid in selected_ids if tid in topic_name_by_id
                         ]
 
-                        onpanel_col, topics_col = st.columns([2, 7])
-                        with onpanel_col:
+                        with top5:
                             on_panel = st.checkbox(
                                 "On Panel?", value=(row["role"] == "panelist"),
                                 key=f"onpanel_{row['panel_speaker_id']}"
@@ -403,7 +393,7 @@ else:
                                 conn.commit()
                                 conn.close()
                                 st.rerun()
-                        with topics_col:
+                        with top6:
                             topic_choices = [t["topic"] for t in their_topics]
                             new_topics = st.multiselect(
                                 "Topics", topic_choices, default=current_topic_names,
@@ -425,6 +415,15 @@ else:
                                 conn.commit()
                                 conn.close()
                                 st.rerun()
+                        with top7:
+                            if st.button("✕", key=f"del_pspeaker_{row['panel_speaker_id']}"):
+                                conn = get_connection()
+                                conn.execute(
+                                    "DELETE FROM panel_speakers WHERE id = ?", (row["panel_speaker_id"],)
+                                )
+                                conn.commit()
+                                conn.close()
+                                st.rerun()
 
             available = [s for s in all_speakers if s["id"] not in assigned_ids]
 
@@ -437,28 +436,36 @@ else:
                 extra_key = f"panel_{pid}_extra_rows"
                 st.session_state.setdefault(extra_key, 3)
 
-                options = ["— none —"] + [s["name"] for s in available]
                 blank_rows_data = []
+                chosen_so_far = set()
 
                 for j in range(st.session_state[extra_key]):
+                    # Speakers picked in earlier rows of this same batch drop out of
+                    # later rows' options too, so the same person can't be added twice.
+                    row_available = [s for s in available if s["id"] not in chosen_so_far]
+                    options = ["— none —"] + [s["name"] for s in row_available]
+
                     with st.container(border=True):
-                        sel_name = st.selectbox(
-                            "Speaker", options, key=f"blank_name_{pid}_{j}"
-                        )
-                        if sel_name != "— none —":
-                            sel_id = next(s["id"] for s in available if s["name"] == sel_name)
+                        col_sel, col_on, col_top = st.columns([4, 1, 2])
+                        with col_sel:
+                            sel_name = st.selectbox(
+                                "Speaker", options, key=f"blank_name_{pid}_{j}"
+                            )
+                        match = next((s for s in row_available if s["name"] == sel_name), None)
+                        if match is not None:
+                            sel_id = match["id"]
+                            chosen_so_far.add(sel_id)
                             conn = get_connection()
                             s_topics = conn.execute(
                                 "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
                                 (sel_id,)
                             ).fetchall()
                             conn.close()
-                            oc, tc = st.columns([2, 7])
-                            with oc:
+                            with col_on:
                                 on_panel_new = st.checkbox(
                                     "On Panel?", value=True, key=f"blank_onpanel_{pid}_{j}"
                                 )
-                            with tc:
+                            with col_top:
                                 chosen_topics = st.multiselect(
                                     "Topics", [t["topic"] for t in s_topics],
                                     key=f"blank_topics_{pid}_{j}", label_visibility="collapsed"
@@ -473,7 +480,11 @@ else:
                 with bcols2:
                     if blank_rows_data and st.button("Save new speakers", key=f"save_new_spk_{pid}"):
                         conn = get_connection()
+                        seen_ids = set()
                         for sel_id, on_panel_new, chosen_topics, s_topics in blank_rows_data:
+                            if sel_id in seen_ids:
+                                continue
+                            seen_ids.add(sel_id)
                             cur = conn.execute(
                                 "INSERT INTO panel_speakers (panel_id, speaker_id, role) VALUES (?, ?, ?)",
                                 (pid, sel_id, "panelist" if on_panel_new else "alternate")
