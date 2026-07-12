@@ -36,6 +36,20 @@ def get_conference_days(conn):
     return [r["day_name"] for r in rows]
 
 
+def parse_topics(raw):
+    """Split on commas and/or newlines, so topics can be pasted either way."""
+    parts = [p.strip() for line in raw.splitlines() for p in line.split(",")]
+    seen = set()
+    topics = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            topics.append(p)
+    return topics
+
+
+st.session_state.setdefault("speakers_open_sid", None)
+
 tab_list, tab_add = st.tabs(["All Speakers", "Add Speaker"])
 
 
@@ -63,7 +77,7 @@ with tab_list:
                 preview = preview[:47] + "..."
             label = display_name(speaker) + (f"   ·   {preview}" if preview else "")
 
-            with st.expander(label):
+            with st.expander(label, expanded=(sid == st.session_state["speakers_open_sid"])):
                 conn = get_connection()
 
                 topics = conn.execute(
@@ -145,6 +159,7 @@ with tab_list:
                               arr_day, arr_time, dep_day, dep_time, sid))
                         conn.commit()
                         st.success("Speaker updated.")
+                        st.session_state["speakers_open_sid"] = sid
                         st.rerun()
 
                 # ── Topics ────────────────────────────────────────────────────
@@ -159,6 +174,7 @@ with tab_list:
                                 if st.button("Remove", key=f"del_topic_{t['id']}"):
                                     conn.execute("DELETE FROM speaker_topics WHERE id = ?", (t["id"],))
                                     conn.commit()
+                                    st.session_state["speakers_open_sid"] = sid
                                     st.rerun()
                     else:
                         st.caption("None")
@@ -166,17 +182,24 @@ with tab_list:
                     with st.form(f"add_topic_{sid}"):
                         tcol1, tcol2 = st.columns([4, 1])
                         with tcol1:
-                            new_topic = st.text_input("Add a topic", key=f"new_topic_{sid}",
-                                                       label_visibility="collapsed",
-                                                       placeholder="Add a topic")
+                            new_topic = st.text_input(
+                                "Add a topic", key=f"new_topic_{sid}",
+                                label_visibility="collapsed",
+                                placeholder="Add topic(s), comma-separated"
+                            )
                         with tcol2:
                             add_topic = st.form_submit_button("Add")
                 if add_topic and new_topic.strip():
-                    conn.execute(
-                        "INSERT INTO speaker_topics (speaker_id, topic) VALUES (?, ?)",
-                        (sid, new_topic.strip())
-                    )
+                    existing_topic_names = {t["topic"] for t in topics}
+                    for topic in parse_topics(new_topic):
+                        if topic not in existing_topic_names:
+                            conn.execute(
+                                "INSERT INTO speaker_topics (speaker_id, topic) VALUES (?, ?)",
+                                (sid, topic)
+                            )
+                            existing_topic_names.add(topic)
                     conn.commit()
+                    st.session_state["speakers_open_sid"] = sid
                     st.rerun()
 
                 # ── Unavailable blocks ────────────────────────────────────────
@@ -191,6 +214,7 @@ with tab_list:
                                 if st.button("Remove", key=f"del_block_{block['id']}"):
                                     conn.execute("DELETE FROM speaker_availability WHERE id = ?", (block["id"],))
                                     conn.commit()
+                                    st.session_state["speakers_open_sid"] = sid
                                     st.rerun()
                     else:
                         st.caption("None")
@@ -213,12 +237,14 @@ with tab_list:
                         (sid, b_day, b_start, b_end)
                     )
                     conn.commit()
+                    st.session_state["speakers_open_sid"] = sid
                     st.rerun()
 
                 # ── Delete ────────────────────────────────────────────────────
                 if st.button("Delete speaker", key=f"del_{sid}"):
                     conn.execute("DELETE FROM speakers WHERE id = ?", (sid,))
                     conn.commit()
+                    st.session_state["speakers_open_sid"] = None
                     st.rerun()
 
                 conn.close()
@@ -242,7 +268,7 @@ with tab_add:
 
         with st.container(border=True):
             st.markdown("**Topics**")
-            st.caption("Enter each topic on its own line.")
+            st.caption("Comma-separated, or one per line.")
             topics_raw = st.text_area("Topics", height=80, label_visibility="collapsed")
 
         with st.container(border=True):
@@ -286,13 +312,11 @@ with tab_add:
             )
             speaker_id = cursor.lastrowid
 
-            for line in topics_raw.splitlines():
-                topic = line.strip()
-                if topic:
-                    conn.execute(
-                        "INSERT INTO speaker_topics (speaker_id, topic) VALUES (?, ?)",
-                        (speaker_id, topic)
-                    )
+            for topic in parse_topics(topics_raw):
+                conn.execute(
+                    "INSERT INTO speaker_topics (speaker_id, topic) VALUES (?, ?)",
+                    (speaker_id, topic)
+                )
 
             conn.commit()
             conn.close()
