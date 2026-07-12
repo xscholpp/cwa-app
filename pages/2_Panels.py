@@ -391,6 +391,12 @@ else:
             panelist_labels = [label_by_pspid[r["panel_speaker_id"]] for r in assigned if r["role"] == "panelist"]
             alternate_labels = [label_by_pspid[r["panel_speaker_id"]] for r in assigned if r["role"] == "alternate"]
 
+            # Included in the widget's key so that adding/removing a speaker,
+            # or a drag completing, forces a fresh mount showing the current
+            # true list — otherwise the component can keep showing its own
+            # last-rendered state until a full page reload.
+            assigned_signature = "|".join(f"{r['panel_speaker_id']}:{r['role']}" for r in assigned)
+
             if editable:
                 sortable_result = sort_items(
                     [
@@ -399,13 +405,10 @@ else:
                     ],
                     multi_containers=True,
                     direction="vertical",
-                    key=f"sortable_speakers_{pid}",
+                    key=f"sortable_speakers_{pid}_{assigned_signature}",
                     custom_style=SORTABLE_STYLE,
                 )
-                st.caption(
-                    "Drag to reorder, or drag between Speakers and Alternates. "
-                    "The speaker you drag is auto-selected below for topic editing."
-                )
+                st.caption("Drag to reorder, or drag between Speakers and Alternates.")
             else:
                 sortable_result = [
                     {"header": "Speakers", "items": panelist_labels},
@@ -428,22 +431,6 @@ else:
                     break
 
             if changed:
-                # Whoever the drag actually moved becomes the one shown in
-                # the "Edit topics for" picker below, so dragging a speaker
-                # doubles as selecting them for topic editing.
-                old_index_by_pspid = {r["panel_speaker_id"]: i for i, r in enumerate(assigned)}
-                new_index_by_pspid = {pspid_by_label[label]: i for i, label in enumerate(new_order_labels)}
-                moved_pspid = next(
-                    (pspid for pspid, new_role in new_role_by_pspid.items()
-                     if new_role != next(r["role"] for r in assigned if r["panel_speaker_id"] == pspid)),
-                    None
-                )
-                if moved_pspid is None:
-                    moved_pspid = max(
-                        old_index_by_pspid,
-                        key=lambda p: abs(old_index_by_pspid[p] - new_index_by_pspid.get(p, old_index_by_pspid[p]))
-                    )
-
                 conn = get_connection()
                 for i, label in enumerate(new_order_labels):
                     pspid = pspid_by_label[label]
@@ -453,59 +440,64 @@ else:
                     )
                 conn.commit()
                 conn.close()
-                st.session_state[f"manage_speaker_{pid}"] = label_by_pspid[moved_pspid]
                 st.rerun()
 
-            # ── Manage one assigned speaker at a time: topics + remove ──────
-            manage_labels = list(pspid_by_label.keys())
-            mcol1, mcol2 = st.columns([5, 1])
-            with mcol1:
-                manage_label = st.selectbox(
-                    "Edit topics for", manage_labels, key=f"manage_speaker_{pid}"
-                )
-            manage_pspid = pspid_by_label[manage_label]
-            manage_row = next(r for r in assigned if r["panel_speaker_id"] == manage_pspid)
-
-            conn = get_connection()
-            their_topics = conn.execute(
-                "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
-                (manage_row["speaker_id"],)
-            ).fetchall()
-            selected_ids = {
-                r["speaker_topic_id"] for r in conn.execute(
-                    "SELECT speaker_topic_id FROM panel_speaker_topics WHERE panel_speaker_id = ?",
-                    (manage_pspid,)
-                ).fetchall()
-            }
-            conn.close()
-            topic_name_by_id = {t["id"]: t["topic"] for t in their_topics}
-            current_topic_names = [topic_name_by_id[tid] for tid in selected_ids if tid in topic_name_by_id]
-
-            with mcol2:
-                st.write("")
-                if st.button("Remove", key=f"del_pspeaker_{manage_pspid}"):
-                    conn = get_connection()
-                    conn.execute("DELETE FROM panel_speakers WHERE id = ?", (manage_pspid,))
-                    conn.commit()
-                    conn.close()
-                    st.rerun()
-
-            new_topics = st.multiselect(
-                "Topics", [t["topic"] for t in their_topics], default=current_topic_names,
-                key=f"topics_{manage_pspid}"
-            )
-            if set(new_topics) != set(current_topic_names):
+            # ── All assigned speakers' topics at a glance, with a delete
+            # button on the right of each — so committees can see why every
+            # speaker is on the panel without opening one at a time. ───────
+            st.markdown("**Topics**")
+            for row in assigned:
                 conn = get_connection()
-                conn.execute("DELETE FROM panel_speaker_topics WHERE panel_speaker_id = ?", (manage_pspid,))
-                for t in their_topics:
-                    if t["topic"] in new_topics:
-                        conn.execute(
-                            "INSERT INTO panel_speaker_topics (panel_speaker_id, speaker_topic_id) VALUES (?, ?)",
-                            (manage_pspid, t["id"])
-                        )
-                conn.commit()
+                their_topics = conn.execute(
+                    "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
+                    (row["speaker_id"],)
+                ).fetchall()
+                selected_ids = {
+                    r["speaker_topic_id"] for r in conn.execute(
+                        "SELECT speaker_topic_id FROM panel_speaker_topics WHERE panel_speaker_id = ?",
+                        (row["panel_speaker_id"],)
+                    ).fetchall()
+                }
                 conn.close()
-                st.rerun()
+                topic_name_by_id = {t["id"]: t["topic"] for t in their_topics}
+                current_topic_names = [
+                    topic_name_by_id[tid] for tid in selected_ids if tid in topic_name_by_id
+                ]
+
+                rcol1, rcol2, rcol3 = st.columns([2, 4, 1])
+                with rcol1:
+                    role_suffix = " (Alt)" if row["role"] == "alternate" else ""
+                    st.markdown(f"{speaker_display(row)}{role_suffix}")
+                with rcol2:
+                    new_topics = st.multiselect(
+                        "Topics", [t["topic"] for t in their_topics], default=current_topic_names,
+                        key=f"topics_{row['panel_speaker_id']}", label_visibility="collapsed"
+                    )
+                    if set(new_topics) != set(current_topic_names):
+                        conn = get_connection()
+                        conn.execute(
+                            "DELETE FROM panel_speaker_topics WHERE panel_speaker_id = ?",
+                            (row["panel_speaker_id"],)
+                        )
+                        for t in their_topics:
+                            if t["topic"] in new_topics:
+                                conn.execute(
+                                    "INSERT INTO panel_speaker_topics "
+                                    "(panel_speaker_id, speaker_topic_id) VALUES (?, ?)",
+                                    (row["panel_speaker_id"], t["id"])
+                                )
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+                with rcol3:
+                    if st.button("Delete", key=f"del_pspeaker_{row['panel_speaker_id']}"):
+                        conn = get_connection()
+                        conn.execute(
+                            "DELETE FROM panel_speakers WHERE id = ?", (row["panel_speaker_id"],)
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
 
         available = [s for s in all_speakers if s["id"] not in assigned_ids]
 
