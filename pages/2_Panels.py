@@ -402,7 +402,10 @@ else:
                     key=f"sortable_speakers_{pid}",
                     custom_style=SORTABLE_STYLE,
                 )
-                st.caption("Drag to reorder, or drag between Speakers and Alternates.")
+                st.caption(
+                    "Drag to reorder, or drag between Speakers and Alternates. "
+                    "The speaker you drag is auto-selected below for topic editing."
+                )
             else:
                 sortable_result = [
                     {"header": "Speakers", "items": panelist_labels},
@@ -425,6 +428,22 @@ else:
                     break
 
             if changed:
+                # Whoever the drag actually moved becomes the one shown in
+                # the "Edit topics for" picker below, so dragging a speaker
+                # doubles as selecting them for topic editing.
+                old_index_by_pspid = {r["panel_speaker_id"]: i for i, r in enumerate(assigned)}
+                new_index_by_pspid = {pspid_by_label[label]: i for i, label in enumerate(new_order_labels)}
+                moved_pspid = next(
+                    (pspid for pspid, new_role in new_role_by_pspid.items()
+                     if new_role != next(r["role"] for r in assigned if r["panel_speaker_id"] == pspid)),
+                    None
+                )
+                if moved_pspid is None:
+                    moved_pspid = max(
+                        old_index_by_pspid,
+                        key=lambda p: abs(old_index_by_pspid[p] - new_index_by_pspid.get(p, old_index_by_pspid[p]))
+                    )
+
                 conn = get_connection()
                 for i, label in enumerate(new_order_labels):
                     pspid = pspid_by_label[label]
@@ -434,6 +453,7 @@ else:
                     )
                 conn.commit()
                 conn.close()
+                st.session_state[f"manage_speaker_{pid}"] = label_by_pspid[moved_pspid]
                 st.rerun()
 
             # ── Manage one assigned speaker at a time: topics + remove ──────
