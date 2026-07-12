@@ -27,15 +27,15 @@ current_user = get_current_user()
 # only the default landing page and the presence of the Login page itself
 # depend on the (possibly still-resolving) auth state.
 content_pages = [
-    st.Page("pages/home.py", title="Home", icon="🏠", default=current_user is not None),
-    st.Page("pages/0_Admin.py", title="Admin", icon="⚙️"),
-    st.Page("pages/1_Speakers.py", title="Speakers", icon="🎙️"),
-    st.Page("pages/2_Panels.py", title="Panels", icon="🗂️"),
-    st.Page("pages/3_Schedule.py", title="Schedule", icon="🗓️"),
+    st.Page("pages/home.py", title="Home", default=current_user is not None),
+    st.Page("pages/0_Admin.py", title="Admin"),
+    st.Page("pages/1_Speakers.py", title="Speakers"),
+    st.Page("pages/2_Panels.py", title="Panels"),
+    st.Page("pages/3_Schedule.py", title="Schedule"),
 ]
 
 if current_user is None:
-    pages = [st.Page("pages/login.py", title="Login", icon="🔑", default=True)] + content_pages
+    pages = [st.Page("pages/login.py", title="Login", default=True)] + content_pages
 else:
     pages = content_pages
 

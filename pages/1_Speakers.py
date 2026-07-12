@@ -87,7 +87,7 @@ with tab_list:
                     return conf_days.index(d) if d in conf_days else default
 
                 with st.container(border=True):
-                    st.markdown("**✏️ Details**")
+                    st.markdown("**Details**")
                     with st.form(f"edit_speaker_{sid}"):
                         title_col, name_col = st.columns([1, 8])
                         with title_col:
@@ -101,7 +101,7 @@ with tab_list:
                             new_name = st.text_input("Name *", value=speaker["name"])
                         new_bio = st.text_area("Bio", value=speaker["bio"] or "", height=80)
 
-                        st.markdown("**🕐 Availability**")
+                        st.markdown("**Availability**")
                         all_days = st.checkbox("Available all conference days", value=is_all_days)
                         st.caption("Uncheck to set a specific arrival and departure.")
 
@@ -149,7 +149,7 @@ with tab_list:
 
                 # ── Topics ────────────────────────────────────────────────────
                 with st.container(border=True):
-                    st.markdown("**🏷️ Topics**")
+                    st.markdown("**Topics**")
                     if topics:
                         for t in topics:
                             tc1, tc2 = st.columns([6, 1])
@@ -181,7 +181,7 @@ with tab_list:
 
                 # ── Unavailable blocks ────────────────────────────────────────
                 with st.container(border=True):
-                    st.markdown("**🚫 Unavailable blocks**")
+                    st.markdown("**Unavailable blocks**")
                     if blocks:
                         for block in blocks:
                             bc1, bc2 = st.columns([6, 1])
@@ -232,7 +232,7 @@ with tab_add:
 
     with st.form("add_speaker_form", clear_on_submit=True):
         with st.container(border=True):
-            st.markdown("**✏️ Speaker details**")
+            st.markdown("**Speaker details**")
             title_col, name_col = st.columns([1, 8])
             with title_col:
                 title = st.selectbox("Title", TITLE_OPTIONS)
@@ -241,12 +241,12 @@ with tab_add:
             bio = st.text_area("Bio", height=80)
 
         with st.container(border=True):
-            st.markdown("**🏷️ Topics**")
+            st.markdown("**Topics**")
             st.caption("Enter each topic on its own line.")
             topics_raw = st.text_area("Topics", height=80, label_visibility="collapsed")
 
         with st.container(border=True):
-            st.markdown("**🕐 Availability**")
+            st.markdown("**Availability**")
             all_days = st.checkbox("Available all conference days", value=True)
             st.caption(
                 "Check this if the speaker is available for the entire conference. "
