@@ -1,13 +1,14 @@
 """
 app.py
 ------
-Home page and login/setup screen for the CWA Conference Manager.
+Entry point for the CWA Conference Manager. Builds the sidebar navigation
+based on whether someone is logged in, then hands off to the selected page.
 Run with: python3 -m streamlit run app.py
 """
 
 import streamlit as st
-from database import initialize_database, get_connection
-from auth import login, logout, get_current_user, create_user, PRESETS, PERMISSIONS
+from database import initialize_database
+from auth import get_current_user
 from layout import widen_content
 
 initialize_database()
@@ -15,77 +16,28 @@ initialize_database()
 st.set_page_config(page_title="CWA Conference Manager", layout="wide")
 widen_content()
 
-# Check whether any user accounts exist yet
-conn = get_connection()
-user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-conn.close()
-
 current_user = get_current_user()
 
-# ── First-time setup (no accounts exist yet) ──────────────────────────────────
-if user_count == 0:
-    st.title("Conference on World Affairs")
-    st.subheader("Welcome — create your admin account to get started")
-    st.info("No accounts have been set up yet. This first account will have full admin access.")
+# The "remember me" cookie can only be read back after one component
+# round-trip, so right after a hard page reload current_user briefly reads
+# as None even for someone who is actually logged in. If Login were the
+# *only* registered page during that split second, a reload of any other
+# page (e.g. /Speakers) would 404 in Streamlit's router before the cookie
+# has a chance to resolve. So the content pages always stay registered;
+# only the default landing page and the presence of the Login page itself
+# depend on the (possibly still-resolving) auth state.
+content_pages = [
+    st.Page("pages/home.py", title="Home", icon="🏠", default=current_user is not None),
+    st.Page("pages/0_Admin.py", title="Admin", icon="⚙️"),
+    st.Page("pages/1_Speakers.py", title="Speakers", icon="🎙️"),
+    st.Page("pages/2_Panels.py", title="Panels", icon="🗂️"),
+    st.Page("pages/3_Schedule.py", title="Schedule", icon="🗓️"),
+]
 
-    with st.form("setup_form"):
-        display_name = st.text_input("Your name")
-        username     = st.text_input("Username")
-        password     = st.text_input("Password", type="password")
-        password2    = st.text_input("Confirm password", type="password")
-        submitted    = st.form_submit_button("Create admin account")
-
-    if submitted:
-        if not all([display_name.strip(), username.strip(), password]):
-            st.error("All fields are required.")
-        elif password != password2:
-            st.error("Passwords do not match.")
-        else:
-            admin_perms = {p: True for p in PERMISSIONS}
-            ok, err = create_user(username, display_name, password, admin_perms)
-            if ok:
-                st.success("Admin account created. Please log in.")
-                st.rerun()
-            else:
-                st.error(f"Could not create account: {err}")
-
-# ── Login screen ──────────────────────────────────────────────────────────────
-elif current_user is None:
-    st.title("Conference on World Affairs")
-    st.subheader("Sign in")
-
-    with st.form("login_form"):
-        username  = st.text_input("Username")
-        password  = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log in")
-
-    if submitted:
-        if login(username, password):
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
-
-# ── Home page (logged in) ─────────────────────────────────────────────────────
+if current_user is None:
+    pages = [st.Page("pages/login.py", title="Login", icon="🔑", default=True)] + content_pages
 else:
-    col1, col2 = st.columns([5, 1])
-    with col1:
-        st.title("Conference on World Affairs")
-        st.caption(f"Signed in as **{current_user['display_name']}**")
-    with col2:
-        st.write("")
-        if st.button("Log out"):
-            logout()
-            st.rerun()
+    pages = content_pages
 
-    st.divider()
-
-    st.markdown("""
-Use the **sidebar** to navigate:
-
-| Section | Description |
-|---|---|
-| **Admin** | Conference days, committees, tracks, rooms, and user accounts |
-| **Speakers** | Add and manage speakers, topics, and availability |
-| **Panels** | Create and track conference panels |
-| **Schedule** | Assign panels to rooms, dates, and times |
-""")
+pg = st.navigation(pages)
+pg.run()

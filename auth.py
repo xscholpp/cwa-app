@@ -205,7 +205,7 @@ def get_current_user():
 def require_login():
     """Call at the top of any page to block access if not logged in."""
     if get_current_user() is None:
-        st.warning("Please log in from the home page.")
+        st.warning("Please log in from the Login page.")
         st.stop()
 
 
