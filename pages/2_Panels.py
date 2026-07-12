@@ -49,13 +49,22 @@ def speaker_display(row):
 
 
 # Compact styling for the drag-to-reorder speaker/alternate widget.
+# Speakers/Alternates are stacked (not side-by-side): the library's own
+# "vertical" mode only controls item flow *within* a container, so the
+# stacking of the two containers themselves is forced here via
+# flex-direction, and the boundary between them gets a red divider.
 SORTABLE_STYLE = """
-.sortable-component {
+.sortable-component.vertical {
+    display: flex !important;
+    flex-direction: column !important;
     border: 1px solid rgba(49, 51, 63, 0.2);
     border-radius: 0.5rem;
 }
 .sortable-container {
     background-color: transparent;
+}
+.sortable-container:nth-of-type(2) {
+    border-top: 3px solid #e03131;
 }
 .sortable-container-header {
     font-weight: 600;
@@ -66,12 +75,20 @@ SORTABLE_STYLE = """
 .sortable-container-body {
     padding: 0.25rem;
 }
-.sortable-item {
-    padding: 0.25rem 0.6rem;
+.sortable-item, .sortable-item:hover {
+    padding: 0.25rem 0.6rem 0.25rem 1.5rem;
     margin: 0.15rem 0;
     border-radius: 0.25rem;
     background-color: rgba(49, 51, 63, 0.06);
+    color: #000 !important;
     font-size: 0.9rem;
+    position: relative;
+}
+.sortable-item::before {
+    content: "⠿";
+    position: absolute;
+    left: 0.5rem;
+    color: rgba(49, 51, 63, 0.45);
 }
 """
 
