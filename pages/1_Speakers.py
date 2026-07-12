@@ -24,6 +24,11 @@ if not has_permission("can_manage_speakers"):
 st.title("Speakers")
 
 TIMES = [f"{h:02d}:{m:02d}" for h in range(6, 24) for m in (0, 30)]
+TITLE_OPTIONS = ["— none —", "Mr.", "Ms.", "Mrs.", "Dr.", "Prof.", "Hon."]
+
+
+def display_name(speaker):
+    return f"{speaker['title']} {speaker['name']}" if speaker["title"] else speaker["name"]
 
 
 def get_conference_days(conn):
@@ -45,7 +50,7 @@ with tab_list:
         st.info("No speakers added yet. Use the 'Add Speaker' tab to get started.")
     else:
         for speaker in speakers:
-            with st.expander(speaker["name"]):
+            with st.expander(display_name(speaker)):
                 conn = get_connection()
                 sid = speaker["id"]
 
@@ -73,6 +78,12 @@ with tab_list:
                     return conf_days.index(d) if d in conf_days else default
 
                 with st.form(f"edit_speaker_{sid}"):
+                    cur_title = speaker["title"] or "— none —"
+                    new_title = st.selectbox(
+                        "Title", TITLE_OPTIONS,
+                        index=TITLE_OPTIONS.index(cur_title) if cur_title in TITLE_OPTIONS else 0,
+                        key=f"e_title_{sid}"
+                    )
                     new_name = st.text_input("Name *", value=speaker["name"])
                     new_bio  = st.text_area("Bio", value=speaker["bio"] or "", height=100)
 
@@ -113,9 +124,10 @@ with tab_list:
 
                         conn.execute("""
                             UPDATE speakers
-                            SET name=?, bio=?, arrival_day=?, arrival_time=?, departure_day=?, departure_time=?
+                            SET title=?, name=?, bio=?, arrival_day=?, arrival_time=?, departure_day=?, departure_time=?
                             WHERE id=?
-                        """, (new_name.strip(), new_bio.strip() or None,
+                        """, (None if new_title == "— none —" else new_title, new_name.strip(),
+                              new_bio.strip() or None,
                               arr_day, arr_time, dep_day, dep_time, sid))
                         conn.commit()
                         st.success("Speaker updated.")
@@ -199,6 +211,7 @@ with tab_add:
 
     with st.form("add_speaker_form", clear_on_submit=True):
         st.subheader("Speaker details")
+        title = st.selectbox("Title", TITLE_OPTIONS)
         name = st.text_input("Full name *")
         bio  = st.text_area("Bio", height=120)
 
@@ -240,9 +253,10 @@ with tab_add:
 
             conn = get_connection()
             cursor = conn.execute(
-                "INSERT INTO speakers (name, bio, arrival_day, arrival_time, departure_day, departure_time) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (name.strip(), bio.strip() or None, arr_day, arr_time, dep_day, dep_time)
+                "INSERT INTO speakers (title, name, bio, arrival_day, arrival_time, departure_day, departure_time) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (None if title == "— none —" else title, name.strip(), bio.strip() or None,
+                 arr_day, arr_time, dep_day, dep_time)
             )
             speaker_id = cursor.lastrowid
 

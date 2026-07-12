@@ -43,6 +43,10 @@ def can_edit_panel(panel_committee_id):
     return can_edit_all or (my_committee_id is not None and my_committee_id == panel_committee_id)
 
 
+def speaker_display(row):
+    return f"{row['title']} {row['name']}" if row["title"] else row["name"]
+
+
 STATUS_OPTIONS = ["draft", "approved", "to be presented"]
 
 conn = get_connection()
@@ -232,7 +236,7 @@ else:
             "SELECT topic FROM panel_topics WHERE panel_id = ? ORDER BY topic", (pid,)
         ).fetchall()
         assigned = conn.execute("""
-            SELECT ps.role, s.name
+            SELECT ps.role, s.title, s.name
             FROM panel_speakers ps JOIN speakers s ON s.id = ps.speaker_id
             WHERE ps.panel_id = ?
             ORDER BY (ps.priority_ranking IS NULL), ps.priority_ranking, ps.id
@@ -245,7 +249,7 @@ else:
         st.markdown("### Speakers")
         if assigned:
             for row in assigned:
-                st.markdown(f"- **{row['name']}** ({row['role']})")
+                st.markdown(f"- **{speaker_display(row)}** ({row['role']})")
         else:
             st.markdown("None")
 
@@ -296,7 +300,8 @@ else:
         else:
             conn = get_connection()
             assigned = conn.execute("""
-                SELECT ps.id AS panel_speaker_id, ps.role, ps.priority_ranking, s.id AS speaker_id, s.name
+                SELECT ps.id AS panel_speaker_id, ps.role, ps.priority_ranking, s.id AS speaker_id,
+                       s.title, s.name
                 FROM panel_speakers ps JOIN speakers s ON s.id = ps.speaker_id
                 WHERE ps.panel_id = ?
                 ORDER BY (ps.priority_ranking IS NULL), ps.priority_ranking, ps.id
@@ -311,13 +316,14 @@ else:
                     )
                 conn.commit()
                 assigned = conn.execute("""
-                    SELECT ps.id AS panel_speaker_id, ps.role, ps.priority_ranking, s.id AS speaker_id, s.name
+                    SELECT ps.id AS panel_speaker_id, ps.role, ps.priority_ranking, s.id AS speaker_id,
+                           s.title, s.name
                     FROM panel_speakers ps JOIN speakers s ON s.id = ps.speaker_id
                     WHERE ps.panel_id = ?
                     ORDER BY ps.priority_ranking
                 """, (pid,)).fetchall()
 
-            all_speakers = conn.execute("SELECT id, name FROM speakers ORDER BY name").fetchall()
+            all_speakers = conn.execute("SELECT id, title, name FROM speakers ORDER BY name").fetchall()
             conn.close()
 
             assigned_ids = {r["speaker_id"] for r in assigned}
@@ -362,7 +368,7 @@ else:
                                 conn.close()
                                 st.rerun()
                         with top4:
-                            st.markdown(f"**{row['name']}**")
+                            st.markdown(f"**{speaker_display(row)}**")
 
                         conn = get_connection()
                         their_topics = conn.execute(
@@ -445,7 +451,7 @@ else:
                     # Speakers picked in earlier rows of this same batch drop out of
                     # later rows' options too, so the same person can't be added twice.
                     row_available = [s for s in available if s["id"] not in chosen_so_far]
-                    options = ["— none —"] + [s["name"] for s in row_available]
+                    options = ["— none —"] + [speaker_display(s) for s in row_available]
 
                     with st.container(border=True):
                         col_sel, col_on, col_top = st.columns([4, 1, 2])
@@ -453,7 +459,7 @@ else:
                             sel_name = st.selectbox(
                                 "Speaker", options, key=f"blank_name_{pid}_{j}"
                             )
-                        match = next((s for s in row_available if s["name"] == sel_name), None)
+                        match = next((s for s in row_available if speaker_display(s) == sel_name), None)
                         if match is not None:
                             sel_id = match["id"]
                             chosen_so_far.add(sel_id)

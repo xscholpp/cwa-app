@@ -31,6 +31,7 @@ def initialize_database():
         -- People who speak at panels
         CREATE TABLE IF NOT EXISTS speakers (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            title          TEXT,  -- e.g. "Dr.", "Prof." — optional, shown before the name
             name           TEXT    NOT NULL,
             bio            TEXT,
             arrival_day    TEXT,
@@ -168,9 +169,9 @@ def initialize_database():
 
     """)
 
-    # Add arrival/departure columns to existing databases that predate this change
+    # Add arrival/departure/title columns to existing databases that predate these changes
     existing = [row[1] for row in conn.execute("PRAGMA table_info(speakers)").fetchall()]
-    for col in ["arrival_day", "arrival_time", "departure_day", "departure_time"]:
+    for col in ["arrival_day", "arrival_time", "departure_day", "departure_time", "title"]:
         if col not in existing:
             conn.execute(f"ALTER TABLE speakers ADD COLUMN {col} TEXT")
 
