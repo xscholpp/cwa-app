@@ -179,7 +179,7 @@ with tab_list:
                     else:
                         st.caption("None")
 
-                    with st.form(f"add_topic_{sid}"):
+                    with st.form(f"add_topic_{sid}", clear_on_submit=True):
                         tcol1, tcol2 = st.columns([4, 1])
                         with tcol1:
                             new_topic = st.text_input(
