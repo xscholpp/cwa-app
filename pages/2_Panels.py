@@ -277,9 +277,6 @@ else:
         track_name = None
         if panel["track_id"]:
             track_name = next((t["name"] for t in tracks if t["id"] == panel["track_id"]), None)
-        panel_topics_rows = conn.execute(
-            "SELECT topic FROM panel_topics WHERE panel_id = ? ORDER BY topic", (pid,)
-        ).fetchall()
         assigned = conn.execute("""
             SELECT ps.role, s.title, s.name
             FROM panel_speakers ps JOIN speakers s ON s.id = ps.speaker_id
@@ -310,13 +307,6 @@ else:
         st.markdown(f"**Presentation notes:** {panel['presentation_notes'] or '—'}")
         if show_admin_notes:
             st.markdown(f"**Admin notes:** {panel['admin_notes'] or '—'}")
-
-        st.markdown("**Relevant speaker topics:**")
-        if panel_topics_rows:
-            for t in panel_topics_rows:
-                st.markdown(f"- {t['topic']}")
-        else:
-            st.markdown("None")
 
     else:
         # ── Editable form fields (top half) ──────────────────────────────────
@@ -616,19 +606,6 @@ else:
         else:
             status_choice = panel["status"]
 
-        conn = get_connection()
-        existing_topics = conn.execute(
-            "SELECT topic FROM panel_topics WHERE panel_id = ? ORDER BY topic", (pid,)
-        ).fetchall()
-        conn.close()
-
-        st.markdown("**Relevant speaker topics**")
-        st.caption("Enter each topic on its own line.")
-        topics_raw = st.text_area(
-            "Topics", value="\n".join(t["topic"] for t in existing_topics), height=100,
-            key=f"pf_topics_{key_suffix}"
-        )
-
         save_clicked = st.button("Save panel", key=f"pf_save_{key_suffix}")
 
         if save_clicked:
@@ -658,14 +635,6 @@ else:
 
                 set_clause = ", ".join(f"{k} = ?" for k in fields)
                 conn.execute(f"UPDATE panels SET {set_clause} WHERE id = ?", (*fields.values(), pid))
-                conn.execute("DELETE FROM panel_topics WHERE panel_id = ?", (pid,))
-
-                for line in topics_raw.splitlines():
-                    topic = line.strip()
-                    if topic:
-                        conn.execute(
-                            "INSERT INTO panel_topics (panel_id, topic) VALUES (?, ?)", (pid, topic)
-                        )
 
                 conn.commit()
                 conn.close()
