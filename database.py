@@ -214,6 +214,43 @@ def initialize_database():
     conn.close()
 
 
+# ── Explicit cascade-delete helpers ───────────────────────────────────────────
+# The schema declares ON DELETE CASCADE for these relationships, but that only
+# reliably fires with a real, single, foreign-keys-enabled SQLite connection.
+# These helpers do the cleanup explicitly in application code instead, so
+# deletes behave the same regardless of what's actually running behind
+# get_connection() (local SQLite today, a hosted DB later).
+
+def delete_speaker(conn, speaker_id):
+    conn.execute("""
+        DELETE FROM panel_speaker_topics
+        WHERE panel_speaker_id IN (SELECT id FROM panel_speakers WHERE speaker_id = ?)
+    """, (speaker_id,))
+    conn.execute("DELETE FROM panel_speakers WHERE speaker_id = ?", (speaker_id,))
+    conn.execute("DELETE FROM speaker_topics WHERE speaker_id = ?", (speaker_id,))
+    conn.execute("DELETE FROM speaker_availability WHERE speaker_id = ?", (speaker_id,))
+    conn.execute("UPDATE schedule SET moderator_id = NULL WHERE moderator_id = ?", (speaker_id,))
+    conn.execute("DELETE FROM speakers WHERE id = ?", (speaker_id,))
+
+
+def delete_panel_speaker(conn, panel_speaker_id):
+    conn.execute(
+        "DELETE FROM panel_speaker_topics WHERE panel_speaker_id = ?", (panel_speaker_id,)
+    )
+    conn.execute("DELETE FROM panel_speakers WHERE id = ?", (panel_speaker_id,))
+
+
+def delete_panel(conn, panel_id):
+    conn.execute("""
+        DELETE FROM panel_speaker_topics
+        WHERE panel_speaker_id IN (SELECT id FROM panel_speakers WHERE panel_id = ?)
+    """, (panel_id,))
+    conn.execute("DELETE FROM panel_speakers WHERE panel_id = ?", (panel_id,))
+    conn.execute("DELETE FROM panel_topics WHERE panel_id = ?", (panel_id,))
+    conn.execute("DELETE FROM schedule WHERE panel_id = ?", (panel_id,))
+    conn.execute("DELETE FROM panels WHERE id = ?", (panel_id,))
+
+
 # If you run this file directly (python database.py), it sets up the database
 # and prints a confirmation message.
 if __name__ == "__main__":

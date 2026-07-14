@@ -22,7 +22,7 @@ Access model:
 
 import streamlit as st
 from streamlit_sortables import sort_items
-from database import get_connection
+from database import get_connection, delete_panel, delete_panel_speaker
 from auth import require_login, has_permission, get_current_user
 from layout import widen_content
 
@@ -482,9 +482,7 @@ else:
                 with rcol3:
                     if st.button("Delete", key=f"del_pspeaker_{row['panel_speaker_id']}"):
                         conn = get_connection()
-                        conn.execute(
-                            "DELETE FROM panel_speakers WHERE id = ?", (row["panel_speaker_id"],)
-                        )
+                        delete_panel_speaker(conn, row["panel_speaker_id"])
                         conn.commit()
                         conn.close()
                         st.rerun()
@@ -645,7 +643,7 @@ else:
         st.divider()
         if st.button("Delete panel", key=f"del_{pid}"):
             conn = get_connection()
-            conn.execute("DELETE FROM panels WHERE id = ?", (pid,))
+            delete_panel(conn, pid)
             conn.commit()
             conn.close()
             st.session_state["panels_open_id"] = None

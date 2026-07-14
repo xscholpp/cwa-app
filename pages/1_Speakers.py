@@ -10,7 +10,7 @@ Availability model:
 """
 
 import streamlit as st
-from database import get_connection
+from database import get_connection, delete_speaker
 from auth import require_login, has_permission
 from layout import widen_content
 
@@ -242,7 +242,7 @@ with tab_list:
 
                 # ── Delete ────────────────────────────────────────────────────
                 if st.button("Delete speaker", key=f"del_{sid}"):
-                    conn.execute("DELETE FROM speakers WHERE id = ?", (sid,))
+                    delete_speaker(conn, sid)
                     conn.commit()
                     st.session_state["speakers_open_sid"] = None
                     st.rerun()
