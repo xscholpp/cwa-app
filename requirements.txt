@@ -1,3 +1,4 @@
 streamlit
 extra-streamlit-components
 streamlit-sortables
+libsql-client

@@ -1,7 +1,11 @@
 """
 database.py
 -----------
-Creates and connects to the SQLite database (cwa.db).
+Creates and connects to the database. Uses local SQLite (cwa.db) by default;
+if TURSO_DATABASE_URL is set in Streamlit secrets, connects to that hosted
+libSQL/Turso database instead so data survives redeploys on Streamlit Cloud
+(whose local disk is ephemeral).
+
 Run this file directly once to set up the database, or just launch the app —
 it calls initialize_database() automatically on startup.
 """
@@ -9,12 +13,97 @@ it calls initialize_database() automatically on startup.
 import sqlite3
 import os
 
+import streamlit as st
+
 # The database file will be created in the same folder as this script.
 DB_PATH = os.path.join(os.path.dirname(__file__), "cwa.db")
 
 
+def _turso_config():
+    """Returns (url, auth_token) if Turso is configured via secrets, else None.
+    Accessing st.secrets at all raises if no secrets.toml exists anywhere, so
+    this has to be defensive rather than just checking for a missing key.
+    """
+    try:
+        url = st.secrets.get("TURSO_DATABASE_URL")
+    except Exception:
+        return None
+    if not url:
+        return None
+    return url, st.secrets.get("TURSO_AUTH_TOKEN")
+
+
+class _LibsqlRow:
+    """Makes a libsql_client Row behave like sqlite3.Row for our call sites:
+    both row["col"] and row[0] indexing, iteration, and dict(row) (sqlite3.Row
+    supports dict() via .keys(), which libsql_client's Row doesn't have)."""
+    __slots__ = ("_row",)
+
+    def __init__(self, row):
+        self._row = row
+
+    def __getitem__(self, key):
+        return self._row[key]
+
+    def keys(self):
+        return self._row.asdict().keys()
+
+    def __iter__(self):
+        return iter(self._row)
+
+    def __len__(self):
+        return len(self._row)
+
+
+class _LibsqlCursorShim:
+    """Makes a libsql_client ResultSet behave like a sqlite3 cursor."""
+
+    def __init__(self, result_set):
+        self._rs = result_set
+        self.lastrowid = result_set.last_insert_rowid
+
+    def fetchone(self):
+        return _LibsqlRow(self._rs.rows[0]) if self._rs.rows else None
+
+    def fetchall(self):
+        return [_LibsqlRow(r) for r in self._rs.rows]
+
+
+class _LibsqlConnectionShim:
+    """Makes a libsql_client sync Client behave like a sqlite3.Connection for
+    the subset of the API this app uses (execute/executescript/commit/close).
+    commit() is a no-op: libsql_client autocommits each statement over HTTP,
+    so there's no explicit transaction to flush.
+    """
+
+    def __init__(self, client):
+        self._client = client
+
+    def execute(self, sql, params=()):
+        return _LibsqlCursorShim(self._client.execute(sql, list(params)))
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self._client.execute(statement)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        self._client.close()
+
+
 def get_connection():
     """Open and return a connection to the database."""
+    turso = _turso_config()
+    if turso:
+        import libsql_client
+        url, auth_token = turso
+        client = libsql_client.create_client_sync(url=url, auth_token=auth_token)
+        return _LibsqlConnectionShim(client)
+
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row          # lets us access columns by name (e.g. row["title"])
     conn.execute("PRAGMA foreign_keys = ON") # enforce relationships between tables
