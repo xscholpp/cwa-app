@@ -30,6 +30,14 @@ def _turso_config():
         return None
     if not url:
         return None
+    # libsql_client's websocket transport (the "libsql://" / "wss://" scheme)
+    # fails the handshake against Turso's current server (confirmed: a valid
+    # token still gets a 400 on the websocket upgrade). Plain HTTPS against
+    # the same host works fine and is all this app needs (no persistent
+    # connection required), so rewrite the scheme rather than require users
+    # to hand-edit the URL Turso's dashboard/CLI gives them.
+    if url.startswith("libsql://"):
+        url = "https://" + url[len("libsql://"):]
     return url, st.secrets.get("TURSO_AUTH_TOKEN")
 
 
