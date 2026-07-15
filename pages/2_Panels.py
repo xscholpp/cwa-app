@@ -359,7 +359,15 @@ else:
             """, (pid,)).fetchall()
 
         all_speakers = conn.execute("SELECT id, title, name FROM speakers ORDER BY name").fetchall()
+        # Every speaker's topics, fetched once here and reused below both for
+        # the assigned-speakers "Topics" section and the add-a-speaker blank
+        # rows — avoids a separate query per speaker in either spot.
+        all_topics_rows = conn.execute("SELECT id, speaker_id, topic FROM speaker_topics ORDER BY topic").fetchall()
         conn.close()
+
+        topics_by_speaker_id = {}
+        for t in all_topics_rows:
+            topics_by_speaker_id.setdefault(t["speaker_id"], []).append(t)
 
         assigned_ids = {r["speaker_id"] for r in assigned}
 
@@ -435,20 +443,27 @@ else:
             # ── All assigned speakers' topics at a glance, with a delete
             # button on the right of each — so committees can see why every
             # speaker is on the panel without opening one at a time. ───────
+            # Which topics are currently tagged, fetched once for every
+            # assigned speaker instead of once per speaker in the loop below
+            # (topics_by_speaker_id itself was already fetched further up).
+            pspids = [r["panel_speaker_id"] for r in assigned]
+            conn = get_connection()
+            psh = ",".join("?" * len(pspids))
+            all_selected = conn.execute(
+                f"SELECT panel_speaker_id, speaker_topic_id FROM panel_speaker_topics "
+                f"WHERE panel_speaker_id IN ({psh})",
+                pspids
+            ).fetchall()
+            conn.close()
+
+            selected_ids_by_pspid = {}
+            for s in all_selected:
+                selected_ids_by_pspid.setdefault(s["panel_speaker_id"], set()).add(s["speaker_topic_id"])
+
             st.markdown("**Topics**")
             for row in assigned:
-                conn = get_connection()
-                their_topics = conn.execute(
-                    "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
-                    (row["speaker_id"],)
-                ).fetchall()
-                selected_ids = {
-                    r["speaker_topic_id"] for r in conn.execute(
-                        "SELECT speaker_topic_id FROM panel_speaker_topics WHERE panel_speaker_id = ?",
-                        (row["panel_speaker_id"],)
-                    ).fetchall()
-                }
-                conn.close()
+                their_topics = topics_by_speaker_id.get(row["speaker_id"], [])
+                selected_ids = selected_ids_by_pspid.get(row["panel_speaker_id"], set())
                 topic_name_by_id = {t["id"]: t["topic"] for t in their_topics}
                 current_topic_names = [
                     topic_name_by_id[tid] for tid in selected_ids if tid in topic_name_by_id
@@ -516,12 +531,7 @@ else:
                 if match is not None:
                     sel_id = match["id"]
                     chosen_so_far.add(sel_id)
-                    conn = get_connection()
-                    s_topics = conn.execute(
-                        "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
-                        (sel_id,)
-                    ).fetchall()
-                    conn.close()
+                    s_topics = topics_by_speaker_id.get(sel_id, [])
                     with col_on:
                         on_panel_new = st.checkbox(
                             "On Panel?", value=True, key=f"blank_onpanel_{pid}_{j}"

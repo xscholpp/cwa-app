@@ -55,16 +55,31 @@ tab_list, tab_add = st.tabs(["All Speakers", "Add Speaker"])
 
 # ── TAB 1: List all speakers ──────────────────────────────────────────────────
 with tab_list:
+    # Fetch topics/blocks for ALL speakers up front (2 queries total) instead
+    # of once per speaker inside the loop below — with a remote DB, N+1
+    # queries turns into N+1 network round-trips, which is where nearly all
+    # of this page's load time was going.
     conn = get_connection()
     conf_days = get_conference_days(conn)
     speakers = conn.execute("SELECT * FROM speakers ORDER BY name").fetchall()
-    topic_preview_rows = conn.execute(
-        "SELECT speaker_id, GROUP_CONCAT(topic, ', ') AS topics "
-        "FROM speaker_topics GROUP BY speaker_id"
+    all_topics = conn.execute(
+        "SELECT id, speaker_id, topic FROM speaker_topics ORDER BY topic"
+    ).fetchall()
+    all_blocks = conn.execute(
+        "SELECT id, speaker_id, day, start_time, end_time FROM speaker_availability "
+        "ORDER BY day, start_time"
     ).fetchall()
     conn.close()
 
-    topics_preview_by_speaker = {r["speaker_id"]: r["topics"] for r in topic_preview_rows}
+    topics_by_speaker = {}
+    for t in all_topics:
+        topics_by_speaker.setdefault(t["speaker_id"], []).append(t)
+    blocks_by_speaker = {}
+    for b in all_blocks:
+        blocks_by_speaker.setdefault(b["speaker_id"], []).append(b)
+    topics_preview_by_speaker = {
+        sid: ", ".join(t["topic"] for t in ts) for sid, ts in topics_by_speaker.items()
+    }
 
     if not speakers:
         st.info("No speakers added yet. Use the 'Add Speaker' tab to get started.")
@@ -80,15 +95,8 @@ with tab_list:
             with st.expander(label, expanded=(sid == st.session_state["speakers_open_sid"])):
                 conn = get_connection()
 
-                topics = conn.execute(
-                    "SELECT id, topic FROM speaker_topics WHERE speaker_id = ? ORDER BY topic",
-                    (sid,)
-                ).fetchall()
-                blocks = conn.execute(
-                    "SELECT id, day, start_time, end_time FROM speaker_availability "
-                    "WHERE speaker_id = ? ORDER BY day, start_time",
-                    (sid,)
-                ).fetchall()
+                topics = topics_by_speaker.get(sid, [])
+                blocks = blocks_by_speaker.get(sid, [])
 
                 # ── Edit basic info ───────────────────────────────────────────
                 is_all_days = speaker["arrival_time"] == "00:00"

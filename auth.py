@@ -201,18 +201,39 @@ def get_current_user():
     if "user" in st.session_state:
         return st.session_state["user"]
 
+    # get_current_user() is called both from app.py (to decide nav) and from
+    # each page's require_login() — both can run in the same script pass
+    # whenever the cookie is still unresolved. The cookie component's get_all()
+    # registers a fixed component key, so calling it twice in one run raises
+    # StreamlitDuplicateElementKey. This per-run cache (reset once at the top
+    # of app.py every rerun — see reset_cookie_check_cache()) makes the second
+    # call in the same run reuse the first call's result instead of invoking
+    # the component again, while still re-checking fresh on the next rerun.
+    if "_cookie_check_cache" in st.session_state:
+        return st.session_state["_cookie_check_cache"]
+
     # The cookie component returns {} until the browser reports back the real
     # cookies; when it does, Streamlit automatically reruns the script with
     # the updated value, so a first-load miss here self-corrects a moment
     # later without any special handling.
     token = _get_cookie_manager().get_all().get(COOKIE_NAME)
     if not token:
+        st.session_state["_cookie_check_cache"] = None
         return None
 
     user = _user_from_token(token)
     if user:
         st.session_state["user"] = user
+    else:
+        st.session_state["_cookie_check_cache"] = None
     return user
+
+
+def reset_cookie_check_cache():
+    """Call once at the very top of app.py on every rerun, before the first
+    get_current_user() call, so each run re-checks the cookie fresh instead
+    of reusing a stale negative result from a previous run."""
+    st.session_state.pop("_cookie_check_cache", None)
 
 
 def require_login():

@@ -7,15 +7,19 @@ Run with: python3 -m streamlit run app.py
 """
 
 import streamlit as st
-from database import initialize_database
-from auth import get_current_user
+from database import ensure_database_ready
+from auth import get_current_user, reset_cookie_check_cache
 from layout import widen_content
 
-initialize_database()
+ensure_database_ready()
 
 st.set_page_config(page_title="CWA Conference Manager", layout="wide")
 widen_content()
 
+# app.py is the one script guaranteed to re-run at the top of every single
+# rerun, so this is where the per-run cookie-check cache gets cleared (see
+# reset_cookie_check_cache's docstring for why it exists at all).
+reset_cookie_check_cache()
 current_user = get_current_user()
 
 # The "remember me" cookie can only be read back after one component
