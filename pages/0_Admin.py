@@ -6,7 +6,7 @@ Only accessible to users with admin permissions.
 """
 
 import streamlit as st
-from database import get_connection
+from database import get_connection, delete_room, delete_conference_day
 from auth import (
     require_login, has_permission, get_current_user,
     create_user, set_password, PRESETS, PERMISSION_LABELS, PERMISSIONS,
@@ -211,27 +211,7 @@ if has_permission("can_manage_admin_settings"):
     # ── Conference Days ───────────────────────────────────────────────────────
     with tabs[tab_index]:
         tab_index += 1
-        from datetime import date, timedelta, datetime
-
-        def generate_slots(start_time, end_time, panel_duration, break_minutes, lunch_start, lunch_end):
-            """Return a list of (slot_start, slot_end) strings for a day's schedule."""
-            slots = []
-            fmt = "%H:%M"
-            current = datetime.strptime(start_time, fmt)
-            day_end  = datetime.strptime(end_time,   fmt)
-            panel_td = timedelta(minutes=panel_duration)
-            break_td = timedelta(minutes=break_minutes)
-            ls = datetime.strptime(lunch_start, fmt) if lunch_start else None
-            le = datetime.strptime(lunch_end,   fmt) if lunch_end   else None
-
-            while current + panel_td <= day_end:
-                slot_end = current + panel_td
-                if ls and le and current < le and slot_end > ls:
-                    current = le
-                    continue
-                slots.append((current.strftime(fmt), slot_end.strftime(fmt)))
-                current = slot_end + break_td
-            return slots
+        from datetime import date, timedelta
 
         TIMES = [f"{h:02d}:{m:02d}" for h in range(6, 24) for m in (0, 30)]
 
@@ -242,7 +222,7 @@ if has_permission("can_manage_admin_settings"):
 
         # ── Global defaults ───────────────────────────────────────────────────
         st.subheader("Global schedule defaults")
-        st.caption("These apply to every day unless a day overrides them.")
+        st.caption("Used as starting values when generating a day's time slots on the Schedule page.")
 
         with st.form("config_form"):
             gc1, gc2, gc3 = st.columns(3)
@@ -280,6 +260,11 @@ if has_permission("can_manage_admin_settings"):
         # ── Add conference days ───────────────────────────────────────────────
         st.divider()
         st.subheader("Conference dates")
+        st.caption(
+            "This is normally a one-time setup step when first configuring the "
+            "conference. Per-day time slots and rooms are managed on the Schedule "
+            "page, not here."
+        )
 
         with st.form("add_days_form"):
             date_range = st.date_input(
@@ -329,74 +314,19 @@ if has_permission("can_manage_admin_settings"):
             else:
                 st.warning("Those dates are already added.")
 
-        # ── Per-day configuration ─────────────────────────────────────────────
+        # ── Day list ───────────────────────────────────────────────────────────
         if not days:
             st.info("No conference dates added yet. Use the date picker above.")
         else:
             st.markdown("---")
             for day in days:
-                date_label = f"{day['day_name']}, {day['date']}"
-                with st.expander(date_label):
-                    with st.form(f"day_form_{day['id']}"):
-                        dc1, dc2, dc3 = st.columns(3)
-                        with dc1:
-                            d_start = st.selectbox("Start time", TIMES,
-                                                    index=TIMES.index(day["start_time"] or "09:00"),
-                                                    key=f"ds_{day['id']}")
-                            d_end   = st.selectbox("End time",   TIMES,
-                                                    index=TIMES.index(day["end_time"]   or "17:30"),
-                                                    key=f"de_{day['id']}")
-                        with dc2:
-                            d_concurrent = st.number_input("Concurrent panels", min_value=1, max_value=20,
-                                                            value=day["concurrent_panels"] or 3,
-                                                            key=f"dc_{day['id']}")
-                        with dc3:
-                            d_lunch_start = st.selectbox("Lunch start (optional)",
-                                                          ["— none —"] + TIMES,
-                                                          index=(TIMES.index(day["lunch_start"]) + 1
-                                                                 if day["lunch_start"] in TIMES else 0),
-                                                          key=f"dls_{day['id']}")
-                            d_lunch_end   = st.selectbox("Lunch end (optional)",
-                                                          ["— none —"] + TIMES,
-                                                          index=(TIMES.index(day["lunch_end"]) + 1
-                                                                 if day["lunch_end"] in TIMES else 0),
-                                                          key=f"dle_{day['id']}")
-                        save_day = st.form_submit_button("Save day settings")
-
-                    if save_day:
-                        ls = d_lunch_start if d_lunch_start != "— none —" else None
-                        le = d_lunch_end   if d_lunch_end   != "— none —" else None
+                dc1, dc2 = st.columns([6, 1])
+                with dc1:
+                    st.markdown(f"**{day['day_name']}**, {day['date']}")
+                with dc2:
+                    if st.button("Remove", key=f"del_day_{day['id']}"):
                         conn = get_connection()
-                        conn.execute("""
-                            UPDATE conference_days
-                            SET start_time=?, end_time=?, concurrent_panels=?, lunch_start=?, lunch_end=?
-                            WHERE id=?
-                        """, (d_start, d_end, d_concurrent, ls, le, day["id"]))
-                        conn.commit()
-                        conn.close()
-                        st.success("Day updated.")
-                        st.rerun()
-
-                    # Slot preview
-                    dur  = config["default_panel_duration"] or 90
-                    brk  = config["default_break_minutes"]  or 15
-                    ls_v = day["lunch_start"] if day["lunch_start"] else None
-                    le_v = day["lunch_end"]   if day["lunch_end"]   else None
-                    slots = generate_slots(
-                        day["start_time"] or "09:00",
-                        day["end_time"]   or "17:30",
-                        dur, brk, ls_v, le_v
-                    )
-                    conc = day["concurrent_panels"] or 3
-                    st.markdown(f"**Schedule preview** — {len(slots)} slots × {conc} concurrent = "
-                                f"**{len(slots) * conc} total panel spots**")
-                    for s, e in slots:
-                        st.markdown(f"- {s} – {e}")
-
-                    st.divider()
-                    if st.button("Remove this day", key=f"del_day_{day['id']}"):
-                        conn = get_connection()
-                        conn.execute("DELETE FROM conference_days WHERE id = ?", (day["id"],))
+                        delete_conference_day(conn, day["id"], day["date"])
                         conn.commit()
                         conn.close()
                         st.rerun()
@@ -525,14 +455,40 @@ if has_permission("can_manage_admin_settings"):
             st.info("No rooms added yet.")
         else:
             for r in rooms:
-                col1, col2 = st.columns([6, 1])
-                with col1:
-                    cap = f"  ·  Capacity: {r['capacity']}" if r["capacity"] else ""
-                    st.markdown(f"**{r['name']}**{cap}")
-                with col2:
-                    if st.button("Remove", key=f"del_room_{r['id']}"):
+                cap = f"  ·  Capacity: {r['capacity']}" if r["capacity"] else ""
+                with st.expander(f"{r['name']}{cap}"):
+                    with st.form(f"edit_room_{r['id']}"):
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            new_name = st.text_input("Name", value=r["name"], key=f"room_name_{r['id']}")
+                        with rc2:
+                            new_cap = st.number_input(
+                                "Capacity (optional)", min_value=0, value=r["capacity"] or 0,
+                                key=f"room_cap_{r['id']}"
+                            )
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        if not new_name.strip():
+                            st.error("Name is required.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                conn.execute(
+                                    "UPDATE rooms SET name = ?, capacity = ? WHERE id = ?",
+                                    (new_name.strip(), new_cap if new_cap > 0 else None, r["id"])
+                                )
+                                conn.commit()
+                                st.success("Room updated.")
+                                st.rerun()
+                            except Exception:
+                                st.error(f"A room named '{new_name.strip()}' already exists.")
+                            finally:
+                                conn.close()
+
+                    st.divider()
+                    if st.button("Delete room", key=f"del_room_{r['id']}"):
                         conn = get_connection()
-                        conn.execute("DELETE FROM rooms WHERE id = ?", (r["id"],))
+                        delete_room(conn, r["id"])
                         conn.commit()
                         conn.close()
                         st.rerun()

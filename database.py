@@ -252,16 +252,24 @@ def initialize_database():
             name TEXT NOT NULL UNIQUE
         );
 
-        -- The final schedule: when and where each panel happens
+        -- Bookable time+room slots that make up the schedule grid. Defined
+        -- and edited by admins independently of which panel (if any) occupies
+        -- each one — this is the grid itself, not an assignment.
+        CREATE TABLE IF NOT EXISTS schedule_slots (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            date       TEXT    NOT NULL,  -- ISO format: "2026-04-07"
+            room_id    INTEGER REFERENCES rooms(id),
+            start_time TEXT    NOT NULL,  -- "14:00"
+            end_time   TEXT    NOT NULL   -- "15:30"
+        );
+
+        -- Which panel (if any) occupies which slot
         CREATE TABLE IF NOT EXISTS schedule (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            panel_id         INTEGER NOT NULL UNIQUE REFERENCES panels(id),   -- one slot per panel
-            room_id          INTEGER REFERENCES rooms(id),
-            track_id         INTEGER REFERENCES tracks(id),
-            moderator_id     INTEGER REFERENCES speakers(id),
-            date             TEXT    NOT NULL,  -- ISO format: "2026-04-07"
-            start_time       TEXT    NOT NULL,  -- "14:00"
-            duration_minutes INTEGER NOT NULL
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            slot_id      INTEGER NOT NULL UNIQUE REFERENCES schedule_slots(id),
+            panel_id     INTEGER NOT NULL UNIQUE REFERENCES panels(id),   -- one slot per panel
+            track_id     INTEGER REFERENCES tracks(id),
+            moderator_id INTEGER REFERENCES speakers(id)
         );
 
         -- User accounts with per-user permission flags
@@ -319,6 +327,24 @@ def initialize_database():
         if col not in existing_panel_cols:
             conn.execute(f"ALTER TABLE panels ADD COLUMN {col} {definition}")
 
+    # The schedule table used to store room/date/time directly on each panel's
+    # row; it now references a schedule_slots row instead (see the CREATE
+    # TABLE comments above). Existing databases predating this change had an
+    # empty, never-actually-used schedule table (the Schedule page was a
+    # stub), so it's safe to just drop and recreate it in the new shape.
+    existing_schedule_cols = [r[1] for r in conn.execute("PRAGMA table_info(schedule)").fetchall()]
+    if existing_schedule_cols and "slot_id" not in existing_schedule_cols:
+        conn.execute("DROP TABLE schedule")
+        conn.execute("""
+            CREATE TABLE schedule (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot_id      INTEGER NOT NULL UNIQUE REFERENCES schedule_slots(id),
+                panel_id     INTEGER NOT NULL UNIQUE REFERENCES panels(id),
+                track_id     INTEGER REFERENCES tracks(id),
+                moderator_id INTEGER REFERENCES speakers(id)
+            )
+        """)
+
     # Seed a single conference_config row if none exists
     if conn.execute("SELECT COUNT(*) FROM conference_config").fetchone()[0] == 0:
         conn.execute("INSERT INTO conference_config (id) VALUES (1)")
@@ -373,6 +399,28 @@ def delete_panel(conn, panel_id):
     conn.execute("DELETE FROM panel_topics WHERE panel_id = ?", (panel_id,))
     conn.execute("DELETE FROM schedule WHERE panel_id = ?", (panel_id,))
     conn.execute("DELETE FROM panels WHERE id = ?", (panel_id,))
+
+
+def delete_room(conn, room_id):
+    # Slots in that room aren't deleted outright — just unassigned, so the
+    # time slot (and whatever panel might occupy it) survives and the admin
+    # can pick a different room for it afterward.
+    conn.execute("UPDATE schedule_slots SET room_id = NULL WHERE room_id = ?", (room_id,))
+    conn.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+
+
+def delete_schedule_slot(conn, slot_id):
+    conn.execute("DELETE FROM schedule WHERE slot_id = ?", (slot_id,))
+    conn.execute("DELETE FROM schedule_slots WHERE id = ?", (slot_id,))
+
+
+def delete_conference_day(conn, day_id, date):
+    conn.execute("""
+        DELETE FROM schedule
+        WHERE slot_id IN (SELECT id FROM schedule_slots WHERE date = ?)
+    """, (date,))
+    conn.execute("DELETE FROM schedule_slots WHERE date = ?", (date,))
+    conn.execute("DELETE FROM conference_days WHERE id = ?", (day_id,))
 
 
 # If you run this file directly (python database.py), it sets up the database
