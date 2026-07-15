@@ -41,7 +41,10 @@ def times_including(*values):
 
 
 def generate_slot_times(start_time, end_time, panel_duration, break_minutes, lunch_start, lunch_end):
-    """Return a list of (slot_start, slot_end) strings for a day's schedule."""
+    """Return a list of (slot_start, slot_end, is_lunch) for a day's schedule.
+    The lunch window (if any) becomes its own real row instead of a gap, so
+    a panel can still be placed there when one draws a big enough audience
+    to be worth scheduling opposite lunch."""
     slots = []
     fmt = "%H:%M"
     current = datetime.strptime(start_time, fmt)
@@ -50,13 +53,17 @@ def generate_slot_times(start_time, end_time, panel_duration, break_minutes, lun
     break_td = timedelta(minutes=break_minutes)
     ls = datetime.strptime(lunch_start, fmt) if lunch_start else None
     le = datetime.strptime(lunch_end, fmt) if lunch_end else None
+    lunch_inserted = False
 
     while current + panel_td <= day_end:
         slot_end = current + panel_td
         if ls and le and current < le and slot_end > ls:
+            if not lunch_inserted:
+                slots.append((ls.strftime(fmt), le.strftime(fmt), True))
+                lunch_inserted = True
             current = le
             continue
-        slots.append((current.strftime(fmt), slot_end.strftime(fmt)))
+        slots.append((current.strftime(fmt), slot_end.strftime(fmt), False))
         current = slot_end + break_td
     return slots
 
@@ -130,34 +137,47 @@ for day, tab in zip(days, day_tabs):
                         value=config["default_break_minutes"] or 15, step=5, key=f"gb_{day['id']}"
                     )
                     g_has_lunch = st.checkbox("Include a lunch break", key=f"glhas_{day['id']}")
-                    if g_has_lunch:
-                        lc1, lc2 = st.columns(2)
-                        with lc1:
-                            g_lunch_start = st.selectbox(
-                                "Lunch start", TIMES, index=TIMES.index("12:00"), key=f"gls_{day['id']}"
-                            )
-                        with lc2:
-                            g_lunch_end = st.selectbox(
-                                "Lunch end", TIMES, index=TIMES.index("13:30"), key=f"gle_{day['id']}"
-                            )
-                    else:
-                        g_lunch_start = g_lunch_end = None
+                    lc1, lc2 = st.columns(2)
+                    with lc1:
+                        g_lunch_start = st.selectbox(
+                            "Lunch start", TIMES, index=TIMES.index("12:00"), key=f"gls_{day['id']}"
+                        )
+                    with lc2:
+                        g_lunch_duration = st.number_input(
+                            "Lunch duration (min)", min_value=15, max_value=240, value=90, step=5,
+                            key=f"gld_{day['id']}"
+                        )
+                    st.caption(
+                        "Only used if \"Include a lunch break\" is checked. Lunch still appears as a "
+                        "normal row in the grid below, so a panel can be placed there if needed."
+                    )
                 generate = st.form_submit_button("Generate slots")
 
             if generate:
                 if not rooms:
                     st.error("Add at least one room in Admin first.")
                 else:
+                    if g_has_lunch:
+                        g_lunch_end = (
+                            datetime.strptime(g_lunch_start, "%H:%M") + timedelta(minutes=g_lunch_duration)
+                        ).strftime("%H:%M")
+                    else:
+                        g_lunch_start = g_lunch_end = None
                     times = generate_slot_times(g_start, g_end, g_duration, g_break, g_lunch_start, g_lunch_end)
                     use_rooms = rooms[:g_concurrent]
                     conn = get_connection()
-                    for s, e in times:
+                    for s, e, _is_lunch in times:
                         for room in use_rooms:
                             conn.execute(
                                 "INSERT INTO schedule_slots (date, room_id, start_time, end_time) "
                                 "VALUES (?, ?, ?, ?)",
                                 (day["date"], room["id"], s, e)
                             )
+                    if g_lunch_start:
+                        conn.execute(
+                            "UPDATE conference_days SET lunch_start = ?, lunch_end = ? WHERE id = ?",
+                            (g_lunch_start, g_lunch_end, day["id"])
+                        )
                     conn.commit()
                     conn.close()
                     st.success(f"Generated {len(times)} time slot(s) × {len(use_rooms)} room(s).")
@@ -184,7 +204,9 @@ for day, tab in zip(days, day_tabs):
 
             for (start, end) in distinct_times:
                 row_cols = st.columns([1.3] + [1] * len(distinct_room_ids))
-                row_cols[0].caption(f"{start}–{end}")
+                is_lunch_row = (start, end) == (day["lunch_start"], day["lunch_end"])
+                label = f"{start}–{end}" + ("  ·  Lunch" if is_lunch_row else "")
+                row_cols[0].caption(label)
                 for i, rid in enumerate(distinct_room_ids):
                     with row_cols[i + 1]:
                         slot = slot_by_time_room.get((start, end, rid))
