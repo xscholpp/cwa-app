@@ -9,7 +9,7 @@ import streamlit as st
 from database import get_connection
 from auth import (
     require_login, has_permission, get_current_user,
-    create_user, PRESETS, PERMISSION_LABELS, PERMISSIONS,
+    create_user, set_password, PRESETS, PERMISSION_LABELS, PERMISSIONS,
     apply_preset_to_session,
 )
 from layout import widen_content
@@ -111,6 +111,26 @@ if has_permission("can_manage_users"):
                                 st.session_state["user"][perm] = int(new_perms[perm])
                         st.success("Permissions updated.")
                         st.rerun()
+
+                    st.divider()
+                    st.markdown("**Change password:**")
+                    st.caption("Passwords are stored as one-way hashes, so the current one can't be shown — only replaced.")
+                    with st.form(f"pw_form_{u['id']}"):
+                        pcol1, pcol2 = st.columns([4, 1])
+                        with pcol1:
+                            new_password = st.text_input(
+                                "New password", type="password", key=f"newpw_{u['id']}",
+                                label_visibility="collapsed", placeholder="New password"
+                            )
+                        with pcol2:
+                            set_pw = st.form_submit_button("Set password")
+                    if set_pw:
+                        if not new_password:
+                            st.error("Enter a new password.")
+                        else:
+                            set_password(u["id"], new_password)
+                            st.success("Password updated.")
+                            st.rerun()
 
                     st.divider()
                     if current_user and u["id"] == current_user["id"]:
@@ -395,13 +415,35 @@ if has_permission("can_manage_admin_settings"):
         else:
             for c in committees:
                 with st.expander(c["name"]):
-                    st.markdown(f"**Description:** {c['description'] or '—'}")
                     conn = get_connection()
                     panel_count = conn.execute(
                         "SELECT COUNT(*) FROM panels WHERE committee_id = ?", (c["id"],)
                     ).fetchone()[0]
                     conn.close()
                     st.markdown(f"**Panels:** {panel_count}")
+
+                    with st.form(f"edit_committee_{c['id']}"):
+                        new_name = st.text_input("Name", value=c["name"], key=f"comm_name_{c['id']}")
+                        save = st.form_submit_button("Save changes")
+                    if save:
+                        if not new_name.strip():
+                            st.error("Name is required.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                conn.execute(
+                                    "UPDATE committees SET name = ? WHERE id = ?",
+                                    (new_name.strip(), c["id"])
+                                )
+                                conn.commit()
+                                st.success("Committee updated.")
+                                st.rerun()
+                            except Exception:
+                                st.error(f"A committee named '{new_name.strip()}' already exists.")
+                            finally:
+                                conn.close()
+
+                    st.divider()
                     if st.button("Delete committee", key=f"del_comm_{c['id']}"):
                         conn = get_connection()
                         conn.execute("DELETE FROM committees WHERE id = ?", (c["id"],))
@@ -412,7 +454,6 @@ if has_permission("can_manage_admin_settings"):
         st.divider()
         with st.form("add_committee_form", clear_on_submit=True):
             c_name = st.text_input("Committee name *")
-            c_desc = st.text_area("Description", height=80)
             submitted = st.form_submit_button("Add committee")
         if submitted:
             if not c_name.strip():
@@ -420,10 +461,7 @@ if has_permission("can_manage_admin_settings"):
             else:
                 conn = get_connection()
                 try:
-                    conn.execute(
-                        "INSERT INTO committees (name, description) VALUES (?, ?)",
-                        (c_name.strip(), c_desc.strip() or None)
-                    )
+                    conn.execute("INSERT INTO committees (name) VALUES (?)", (c_name.strip(),))
                     conn.commit()
                     st.rerun()
                 except Exception:

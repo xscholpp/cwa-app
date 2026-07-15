@@ -105,6 +105,19 @@ def create_user(username, display_name, password, permissions, committee_id=None
         conn.close()
 
 
+def set_password(user_id, new_password):
+    """Reset a user's password. Passwords are one-way hashed, so there's no
+    way to look up the existing one — only overwrite it with a new one."""
+    salt = os.urandom(16).hex()
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+        (_hash_password(new_password, salt), salt, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
 # ── "Remember me" cookie (keeps you logged in across a page refresh) ────────
 # The cookie stores "username:signature", signed with a secret generated once
 # and stored in conference_config, so a client can't forge another user's
