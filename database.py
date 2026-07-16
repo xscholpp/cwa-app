@@ -239,6 +239,18 @@ def initialize_database():
             speaker_topic_id INTEGER NOT NULL REFERENCES speaker_topics(id) ON DELETE CASCADE
         );
 
+        -- Manually-marked pairs of panels that must never run at the same time
+        -- (e.g. two panels competing for the same audience). Symmetric, so
+        -- always stored with panel_id_a < panel_id_b to prevent the same pair
+        -- being inserted twice in either order.
+        CREATE TABLE IF NOT EXISTS panel_conflicts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            panel_id_a INTEGER NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+            panel_id_b INTEGER NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+            CHECK (panel_id_a < panel_id_b),
+            UNIQUE (panel_id_a, panel_id_b)
+        );
+
         -- Physical rooms where panels take place
         CREATE TABLE IF NOT EXISTS rooms (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -318,10 +330,11 @@ def initialize_database():
     # Add new columns to panels for existing databases
     existing_panel_cols = [r[1] for r in conn.execute("PRAGMA table_info(panels)").fetchall()]
     panel_col_upgrades = [
-        ("track_id",           "INTEGER REFERENCES tracks(id)"),
-        ("committee_notes",    "TEXT"),
-        ("presentation_notes", "TEXT"),
-        ("admin_notes",        "TEXT"),
+        ("track_id",            "INTEGER REFERENCES tracks(id)"),
+        ("committee_notes",     "TEXT"),
+        ("presentation_notes",  "TEXT"),
+        ("admin_notes",         "TEXT"),
+        ("expected_attendance", "TEXT CHECK(expected_attendance IN ('low','medium','high'))"),
     ]
     for col, definition in panel_col_upgrades:
         if col not in existing_panel_cols:
@@ -344,6 +357,12 @@ def initialize_database():
                 moderator_id INTEGER REFERENCES speakers(id)
             )
         """)
+        existing_schedule_cols = [r[1] for r in conn.execute("PRAGMA table_info(schedule)").fetchall()]
+
+    # Add `locked` column to schedule for existing databases (a locked
+    # assignment is never touched by the automatic scheduler).
+    if "locked" not in existing_schedule_cols:
+        conn.execute("ALTER TABLE schedule ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
 
     # Seed a single conference_config row if none exists
     if conn.execute("SELECT COUNT(*) FROM conference_config").fetchone()[0] == 0:
@@ -397,8 +416,22 @@ def delete_panel(conn, panel_id):
     """, (panel_id,))
     conn.execute("DELETE FROM panel_speakers WHERE panel_id = ?", (panel_id,))
     conn.execute("DELETE FROM panel_topics WHERE panel_id = ?", (panel_id,))
+    conn.execute(
+        "DELETE FROM panel_conflicts WHERE panel_id_a = ? OR panel_id_b = ?", (panel_id, panel_id)
+    )
     conn.execute("DELETE FROM schedule WHERE panel_id = ?", (panel_id,))
     conn.execute("DELETE FROM panels WHERE id = ?", (panel_id,))
+
+
+def add_panel_conflict(conn, panel_id_1, panel_id_2):
+    """Marks two panels as mutually exclusive for scheduling. Order-
+    independent — always normalizes to (min, max) before insert."""
+    if panel_id_1 == panel_id_2:
+        return
+    a, b = sorted((panel_id_1, panel_id_2))
+    conn.execute(
+        "INSERT OR IGNORE INTO panel_conflicts (panel_id_a, panel_id_b) VALUES (?, ?)", (a, b)
+    )
 
 
 def delete_room(conn, room_id):

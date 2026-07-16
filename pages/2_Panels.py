@@ -22,7 +22,7 @@ Access model:
 
 import streamlit as st
 from streamlit_sortables import sort_items
-from database import get_connection, delete_panel, delete_panel_speaker
+from database import get_connection, delete_panel, delete_panel_speaker, add_panel_conflict
 from auth import require_login, has_permission, get_current_user
 from layout import widen_content
 
@@ -93,6 +93,7 @@ SORTABLE_STYLE = """
 """
 
 STATUS_OPTIONS = ["draft", "approved", "to be presented"]
+ATTENDANCE_OPTIONS = ["— none —", "low", "medium", "high"]
 
 conn = get_connection()
 committees = conn.execute("SELECT id, name FROM committees ORDER BY name").fetchall()
@@ -595,6 +596,34 @@ else:
             key=f"pf_priority_{key_suffix}"
         )
 
+        cur_attendance = panel["expected_attendance"] or "— none —"
+        attendance_choice = st.selectbox(
+            "Expected attendance (used by the auto-scheduler)", ATTENDANCE_OPTIONS,
+            index=ATTENDANCE_OPTIONS.index(cur_attendance) if cur_attendance in ATTENDANCE_OPTIONS else 0,
+            key=f"pf_attendance_{key_suffix}"
+        )
+
+        conn = get_connection()
+        other_panels = conn.execute(
+            "SELECT id, title FROM panels WHERE id != ? ORDER BY title", (pid,)
+        ).fetchall()
+        conflict_rows = conn.execute(
+            "SELECT panel_id_a, panel_id_b FROM panel_conflicts WHERE panel_id_a = ? OR panel_id_b = ?",
+            (pid, pid)
+        ).fetchall()
+        conn.close()
+        conflict_ids = {(r["panel_id_b"] if r["panel_id_a"] == pid else r["panel_id_a"]) for r in conflict_rows}
+        title_by_other_id = {p["id"]: p["title"] for p in other_panels}
+        current_conflict_titles = [title_by_other_id[i] for i in conflict_ids if i in title_by_other_id]
+
+        conflict_choice = st.multiselect(
+            "Don't schedule at the same time as",
+            [p["title"] for p in other_panels],
+            default=current_conflict_titles,
+            key=f"pf_conflicts_{key_suffix}",
+            help="The auto-scheduler will never place these panels in the same time slot."
+        )
+
         committee_notes = st.text_area(
             "Committee notes", value=panel["committee_notes"] or "", key=f"pf_cnotes_{key_suffix}"
         )
@@ -635,6 +664,7 @@ else:
                     "committee_notes": committee_notes.strip() or None,
                     "presentation_notes": presentation_notes.strip() or None,
                     "status": status_choice,
+                    "expected_attendance": None if attendance_choice == "— none —" else attendance_choice,
                 }
                 if can_edit_all:
                     fields["committee_id"] = chosen_committee_id
@@ -643,6 +673,12 @@ else:
 
                 set_clause = ", ".join(f"{k} = ?" for k in fields)
                 conn.execute(f"UPDATE panels SET {set_clause} WHERE id = ?", (*fields.values(), pid))
+
+                other_id_by_title = {p["title"]: p["id"] for p in other_panels}
+                new_conflict_ids = {other_id_by_title[t] for t in conflict_choice}
+                conn.execute("DELETE FROM panel_conflicts WHERE panel_id_a = ? OR panel_id_b = ?", (pid, pid))
+                for other_id in new_conflict_ids:
+                    add_panel_conflict(conn, pid, other_id)
 
                 conn.commit()
                 conn.close()

@@ -36,6 +36,7 @@ content_pages = [
     st.Page("pages/1_Speakers.py", title="Speakers"),
     st.Page("pages/2_Panels.py", title="Panels"),
     st.Page("pages/3_Schedule.py", title="Schedule"),
+    st.Page("pages/4_Auto_Schedule.py", title="Auto Schedule"),
 ]
 
 if current_user is None:

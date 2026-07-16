@@ -212,6 +212,11 @@ def edit_slot_dialog(slot_id):
         "Assigned panel", panel_choices,
         index=panel_choices.index(cur_panel_title) if cur_panel_title in panel_choices else 0
     )
+    e_locked = st.checkbox(
+        "Lock this assignment (auto-scheduler will never move it)",
+        value=bool(current_assignment["locked"]) if current_assignment else False,
+        key=f"e_locked_{slot_id}"
+    )
 
     save_col, delete_col = st.columns(2)
     with save_col:
@@ -235,7 +240,10 @@ def edit_slot_dialog(slot_id):
             conn.execute("DELETE FROM schedule WHERE slot_id = ?", (slot_id,))
             if e_panel != "— empty —":
                 panel_id = next(p["id"] for p in available_panels if p["title"] == e_panel)
-                conn.execute("INSERT INTO schedule (slot_id, panel_id) VALUES (?, ?)", (slot_id, panel_id))
+                conn.execute(
+                    "INSERT INTO schedule (slot_id, panel_id, locked) VALUES (?, ?, ?)",
+                    (slot_id, panel_id, int(e_locked))
+                )
             conn.commit()
             conn.close()
             st.rerun()
