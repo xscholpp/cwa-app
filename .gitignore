@@ -1,6 +1,7 @@
 cwa.db
 cwa.db-shm
 cwa.db-wal
+cwa.db.backup-*
 __pycache__/
 *.pyc
 .DS_Store
