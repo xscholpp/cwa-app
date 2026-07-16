@@ -38,6 +38,86 @@ def to_str(t):
     return t.strftime("%H:%M")
 
 
+def to_12h_display(hhmm):
+    t = to_time(hhmm)
+    h12 = t.hour % 12 or 12
+    return f"{h12}:{t.minute:02d}"
+
+
+def parse_time_text(raw, fallback_meridiem):
+    """Parse a quick-to-type time string into a datetime.time, or None if it
+    can't be parsed. Accepts an optional colon and an optional trailing
+    a/p/am/pm marker (case-insensitive) — '930a', '9:30am', '215p', '9:30'
+    (uses fallback_meridiem), and '14:30'/'1430' (always read as 24-hour,
+    marker or not, since 13-23 isn't a valid 12-hour hour) all work."""
+    if not raw:
+        return None
+    s = raw.strip().lower().replace(" ", "")
+    if not s:
+        return None
+
+    meridiem = None
+    for suffix, mer in (("am", "AM"), ("pm", "PM"), ("a", "AM"), ("p", "PM")):
+        if s.endswith(suffix):
+            meridiem = mer
+            s = s[: -len(suffix)]
+            break
+
+    if ":" in s:
+        hh_s, mm_s = s.split(":", 1)
+    elif len(s) > 2:
+        hh_s, mm_s = s[:-2], s[-2:]
+    else:
+        hh_s, mm_s = s, "0"
+
+    if not hh_s.isdigit() or not mm_s.isdigit():
+        return None
+    hh, mm = int(hh_s), int(mm_s)
+    if not (0 <= mm < 60):
+        return None
+
+    if meridiem is None:
+        if not (0 <= hh <= 23):
+            return None
+        hour24 = ((hh % 12) + (12 if fallback_meridiem == "PM" else 0)) if hh <= 12 else hh
+    else:
+        if not (1 <= hh <= 12):
+            return None
+        hour24 = (hh % 12) + (12 if meridiem == "PM" else 0)
+
+    return dtime(hour24, mm)
+
+
+def time_field(label, key, default_hhmm):
+    """Typable time entry: a plain text box (accepts '930a', '2:15 pm',
+    '14:30', or just '930' using the AM/PM toggle below) plus a click
+    toggle for when the text alone doesn't specify a meridiem — typing
+    a/p in the text always wins over the toggle. Returns a 24-hour
+    'HH:MM' string. Built from text_input + segmented_control rather than
+    st.time_input so it's a real text box, not a dropdown/scroll picker,
+    and both widgets are form-safe (unlike a plain st.button)."""
+    text_key = f"{key}_text"
+    mer_key = f"{key}_mer"
+
+    if text_key not in st.session_state:
+        st.session_state[text_key] = to_12h_display(default_hhmm)
+    if mer_key not in st.session_state:
+        st.session_state[mer_key] = "AM" if to_time(default_hhmm).hour < 12 else "PM"
+
+    tcol, mcol = st.columns([2, 1])
+    with tcol:
+        raw = st.text_input(label, key=text_key)
+    with mcol:
+        st.write("")
+        meridiem = st.segmented_control(
+            "AM/PM", ["AM", "PM"], key=mer_key, label_visibility="collapsed"
+        )
+
+    fallback = meridiem if meridiem in ("AM", "PM") else "AM"
+    parsed = parse_time_text(raw, fallback) or to_time(default_hhmm)
+    return to_str(parsed)
+
+
 def generate_slot_times(start_time, end_time, panel_duration, break_minutes, lunch_start, lunch_end):
     """Return a list of (slot_start, slot_end, is_lunch) for a day's schedule.
     The lunch window (if any) becomes its own real row instead of a gap, so
@@ -105,9 +185,9 @@ def edit_slot_dialog(slot_id):
     )
     tc1, tc2 = st.columns(2)
     with tc1:
-        e_start = st.time_input("Start", value=to_time(slot_row["start_time"]), step=60)
+        e_start = time_field("Start", f"e_start_{slot_id}", slot_row["start_time"])
     with tc2:
-        e_end = st.time_input("End", value=to_time(slot_row["end_time"]), step=60)
+        e_end = time_field("End", f"e_end_{slot_id}", slot_row["end_time"])
 
     e_panel = st.selectbox(
         "Assigned panel", panel_choices,
@@ -121,22 +201,25 @@ def edit_slot_dialog(slot_id):
         delete_slot = st.button("Delete slot", use_container_width=True)
 
     if save_slot:
-        new_room_id = None
-        if e_room != "— no room —":
-            new_room_id = next(r["id"] for r in rooms if r["name"] == e_room)
+        if to_time(e_end) <= to_time(e_start):
+            st.error("End time must be after start time.")
+        else:
+            new_room_id = None
+            if e_room != "— no room —":
+                new_room_id = next(r["id"] for r in rooms if r["name"] == e_room)
 
-        conn = get_connection()
-        conn.execute(
-            "UPDATE schedule_slots SET room_id = ?, start_time = ?, end_time = ? WHERE id = ?",
-            (new_room_id, to_str(e_start), to_str(e_end), slot_id)
-        )
-        conn.execute("DELETE FROM schedule WHERE slot_id = ?", (slot_id,))
-        if e_panel != "— empty —":
-            panel_id = next(p["id"] for p in available_panels if p["title"] == e_panel)
-            conn.execute("INSERT INTO schedule (slot_id, panel_id) VALUES (?, ?)", (slot_id, panel_id))
-        conn.commit()
-        conn.close()
-        st.rerun()
+            conn = get_connection()
+            conn.execute(
+                "UPDATE schedule_slots SET room_id = ?, start_time = ?, end_time = ? WHERE id = ?",
+                (new_room_id, e_start, e_end, slot_id)
+            )
+            conn.execute("DELETE FROM schedule WHERE slot_id = ?", (slot_id,))
+            if e_panel != "— empty —":
+                panel_id = next(p["id"] for p in available_panels if p["title"] == e_panel)
+                conn.execute("INSERT INTO schedule (slot_id, panel_id) VALUES (?, ?)", (slot_id, panel_id))
+            conn.commit()
+            conn.close()
+            st.rerun()
 
     if delete_slot:
         conn = get_connection()
@@ -187,18 +270,16 @@ for day, tab in zip(days, day_tabs):
                 st.markdown("**Generate slots from defaults**")
                 gc1, gc2 = st.columns(2)
                 with gc1:
-                    g_start = st.time_input(
-                        "Day start", value=to_time(config["default_start_time"] or "09:00"),
-                        step=60, key=f"gs_{day['id']}"
+                    g_start = time_field(
+                        "Day start", f"gs_{day['id']}", config["default_start_time"] or "09:00"
                     )
                     g_duration = st.number_input(
                         "Panel duration (min)", min_value=1, max_value=240,
                         value=config["default_panel_duration"] or 90, step=5, key=f"gd_{day['id']}"
                     )
                 with gc2:
-                    g_end = st.time_input(
-                        "Day end", value=to_time(config["default_end_time"] or "17:30"),
-                        step=60, key=f"ge_{day['id']}"
+                    g_end = time_field(
+                        "Day end", f"ge_{day['id']}", config["default_end_time"] or "17:30"
                     )
                     g_break = st.number_input(
                         "Break between panels (min)", min_value=0, max_value=60,
@@ -218,9 +299,7 @@ for day, tab in zip(days, day_tabs):
                 g_has_lunch = st.checkbox("Include a lunch break", key=f"glhas_{day['id']}")
                 lc1, lc2 = st.columns(2)
                 with lc1:
-                    g_lunch_start = st.time_input(
-                        "Lunch start", value=dtime(12, 0), step=60, key=f"gls_{day['id']}"
-                    )
+                    g_lunch_start = time_field("Lunch start", f"gls_{day['id']}", "12:00")
                 with lc2:
                     g_lunch_duration = st.number_input(
                         "Lunch duration (min)", min_value=15, max_value=240, value=90, step=5,
@@ -235,17 +314,19 @@ for day, tab in zip(days, day_tabs):
             if generate:
                 if not g_rooms:
                     st.error("Choose at least one room.")
+                elif to_time(g_end) <= to_time(g_start):
+                    st.error("Day end must be after day start.")
                 else:
                     if g_has_lunch:
-                        lunch_start_str = to_str(g_lunch_start)
+                        lunch_start_str = g_lunch_start
                         lunch_end_str = (
-                            datetime.combine(datetime.today(), g_lunch_start)
+                            datetime.combine(datetime.today(), to_time(g_lunch_start))
                             + timedelta(minutes=g_lunch_duration)
                         ).strftime("%H:%M")
                     else:
                         lunch_start_str = lunch_end_str = None
                     times = generate_slot_times(
-                        to_str(g_start), to_str(g_end), g_duration, g_break, lunch_start_str, lunch_end_str
+                        g_start, g_end, g_duration, g_break, lunch_start_str, lunch_end_str
                     )
                     use_rooms = [r for r in rooms if r["name"] in g_rooms]
                     conn = get_connection()
@@ -313,8 +394,8 @@ for day, tab in zip(days, day_tabs):
             with rb1:
                 with st.form(f"row_shift_{day['id']}"):
                     st.caption("Shift this row's start time (each slot keeps its own duration).")
-                    new_row_start = st.time_input(
-                        "New start time", value=to_time(orig_start), step=60, key=f"rrs_{day['id']}"
+                    new_row_start = time_field(
+                        "New start time", f"rrs_{day['id']}_{orig_start}", orig_start
                     )
                     apply_shift = st.form_submit_button("Shift row")
             with rb2:
@@ -327,7 +408,7 @@ for day, tab in zip(days, day_tabs):
                     apply_duration = st.form_submit_button("Set row duration")
 
             if apply_shift:
-                delta = datetime.combine(datetime.today(), new_row_start) - datetime.combine(
+                delta = datetime.combine(datetime.today(), to_time(new_row_start)) - datetime.combine(
                     datetime.today(), to_time(orig_start)
                 )
                 conn = get_connection()
@@ -375,20 +456,22 @@ for day, tab in zip(days, day_tabs):
                     key=f"as_room_{day['id']}"
                 )
             with ac2:
-                a_start = st.time_input("Start", value=dtime(9, 0), step=60, key=f"as_start_{day['id']}")
+                a_start = time_field("Start", f"as_start_{day['id']}", "09:00")
             with ac3:
-                a_end = st.time_input("End", value=dtime(10, 30), step=60, key=f"as_end_{day['id']}")
+                a_end = time_field("End", f"as_end_{day['id']}", "10:30")
             add_slot = st.form_submit_button("Add slot")
 
         if add_slot:
             if not rooms:
                 st.error("Add a room in Admin first.")
+            elif to_time(a_end) <= to_time(a_start):
+                st.error("End time must be after start time.")
             else:
                 room_id = next(r["id"] for r in rooms if r["name"] == a_room)
                 conn = get_connection()
                 conn.execute(
                     "INSERT INTO schedule_slots (date, room_id, start_time, end_time) VALUES (?, ?, ?, ?)",
-                    (day["date"], room_id, to_str(a_start), to_str(a_end))
+                    (day["date"], room_id, a_start, a_end)
                 )
                 conn.commit()
                 conn.close()
