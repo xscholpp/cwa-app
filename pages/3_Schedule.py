@@ -16,7 +16,7 @@ Model:
 from datetime import datetime, timedelta, time as dtime
 
 import streamlit as st
-from database import get_connection, delete_schedule_slot
+from database import get_connection, delete_schedule_slot, reset_day_slots
 from auth import require_login, has_permission
 from layout import widen_content
 
@@ -144,6 +144,25 @@ def generate_slot_times(start_time, end_time, panel_duration, break_minutes, lun
         slots.append((current.strftime(fmt), slot_end.strftime(fmt), False))
         current = slot_end + break_td
     return slots
+
+
+@st.dialog("Reset day?")
+def confirm_reset_day_dialog(day):
+    st.warning(
+        f"This will permanently delete **all time slots and panel assignments** for "
+        f"**{day['day_name']} ({day['date']})**. This can't be undone."
+    )
+    cancel_col, confirm_col = st.columns(2)
+    with cancel_col:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+    with confirm_col:
+        if st.button("Yes, reset this day", type="primary", use_container_width=True):
+            conn = get_connection()
+            reset_day_slots(conn, day["date"])
+            conn.commit()
+            conn.close()
+            st.rerun()
 
 
 @st.dialog("Edit slot")
@@ -361,7 +380,13 @@ for day, tab in zip(days, day_tabs):
 
             slot_by_time_room = {(s["start_time"], s["end_time"], s["room_id"]): s for s in slots}
 
-            st.caption("Click any slot to open it in a popup for editing.")
+            cap_col, reset_col = st.columns([4, 1])
+            with cap_col:
+                st.caption("Click any slot to open it in a popup for editing.")
+            with reset_col:
+                if st.button("Reset day", key=f"reset_day_{day['id']}", use_container_width=True):
+                    confirm_reset_day_dialog(day)
+
             header_cols = st.columns([1.3] + [1] * len(distinct_room_ids))
             header_cols[0].markdown("**Time**")
             for i, rid in enumerate(distinct_room_ids):

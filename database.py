@@ -423,6 +423,16 @@ def delete_conference_day(conn, day_id, date):
     conn.execute("DELETE FROM conference_days WHERE id = ?", (day_id,))
 
 
+def reset_day_slots(conn, date):
+    """Delete all schedule_slots (and their panel assignments) for a date,
+    without touching the conference_days row itself."""
+    conn.execute("""
+        DELETE FROM schedule
+        WHERE slot_id IN (SELECT id FROM schedule_slots WHERE date = ?)
+    """, (date,))
+    conn.execute("DELETE FROM schedule_slots WHERE date = ?", (date,))
+
+
 # If you run this file directly (python database.py), it sets up the database
 # and prints a confirmation message.
 if __name__ == "__main__":
